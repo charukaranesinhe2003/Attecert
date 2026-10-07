@@ -9,6 +9,7 @@ use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
 use App\Services\AuthService;
+use App\Services\InvoiceService;
 use App\Services\QuotationService;
 
 final class QuotationController extends Controller
@@ -17,6 +18,7 @@ final class QuotationController extends Controller
         \App\Core\Validator $validator,
         private Database $db,
         private QuotationService $quotations,
+        private InvoiceService $invoices,
         private AuthService $auth
     ) {
         parent::__construct($validator);
@@ -71,7 +73,28 @@ final class QuotationController extends Controller
     {
         $result = $this->quotations->send((int) $id, (int) $this->auth->id());
         flash($result['status'] === 'sent' ? 'success' : 'error', $result['status'] === 'sent' ? __('admin.email_sent') : (string) $result['error']);
+        $returnCase = (int) $request->input('return_case', 0);
+        if ($returnCase > 0) {
+            return $this->redirect('/admin/cases/' . $returnCase . '#quote');
+        }
+        $quote = $this->db->fetch('SELECT case_id FROM quotations WHERE id = ?', [(int) $id]);
 
-        return $this->redirect('/admin/quotations/' . $id);
+        return $this->redirect('/admin/cases/' . (int) ($quote['case_id'] ?? 0) . '#quote');
+    }
+
+    public function createInvoice(Request $request, string $id): Response
+    {
+        try {
+            $invoiceId = $this->invoices->createFromQuotation((int) $id, (int) $this->auth->id());
+            $invoice = $this->db->fetch('SELECT case_id, number FROM invoices WHERE id = ?', [$invoiceId]);
+            flash('success', __('admin.invoice_created', ['number' => (string) ($invoice['number'] ?? '')]));
+
+            return $this->redirect('/admin/cases/' . (int) ($invoice['case_id'] ?? 0) . '#finance');
+        } catch (\Throwable $exception) {
+            flash('error', $exception->getMessage());
+            $quote = $this->db->fetch('SELECT case_id FROM quotations WHERE id = ?', [(int) $id]);
+
+            return $this->redirect('/admin/cases/' . (int) ($quote['case_id'] ?? 0) . '#finance');
+        }
     }
 }

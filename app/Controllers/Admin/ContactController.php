@@ -18,11 +18,24 @@ final class ContactController extends Controller
 
     public function index(Request $request): Response
     {
+        $source = (string) $request->query('source', 'all');
+        if (!in_array($source, ['all', 'guest', 'support'], true)) {
+            $source = 'all';
+        }
+        $sql = 'SELECT m.*, c.id AS linked_customer_id FROM contact_messages m LEFT JOIN customers c ON c.id = m.customer_id WHERE 1 = 1';
+        $params = [];
+        if ($source !== 'all') {
+            $sql .= ' AND m.source = ?';
+            $params[] = $source;
+        }
+        $sql .= ' ORDER BY m.created_at DESC';
+
         return $this->view('admin/contacts/index', [
             'title' => __('admin.contacts'),
             'robots' => 'noindex',
             'active' => 'contacts',
-            'page' => $this->db->paginate('SELECT * FROM contact_messages ORDER BY created_at DESC', [], $this->pageQuery($request)),
+            'source' => $source,
+            'page' => $this->db->paginate($sql, $params, $this->pageQuery($request)),
         ], 'layouts/admin');
     }
 

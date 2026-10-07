@@ -24,6 +24,19 @@ final class ProcessController extends Controller
         parent::__construct($validator);
     }
 
+    public function index(Request $request): Response
+    {
+        return $this->view('admin/process/index', [
+            'title' => __('admin.processing'),
+            'robots' => 'noindex',
+            'active' => 'processing',
+            'pageHeading' => __('admin.processing'),
+            'pageDescription' => __('admin.processing_hint'),
+            'mofa' => $this->db->fetchAll('SELECT m.*, c.number, cu.name AS customer_name FROM mofa_processes m INNER JOIN cases c ON c.id = m.case_id INNER JOIN customers cu ON cu.id = c.customer_id ORDER BY m.updated_at DESC LIMIT 30'),
+            'embassy' => $this->db->fetchAll('SELECT e.*, c.number, cu.name AS customer_name FROM embassy_processes e INNER JOIN cases c ON c.id = e.case_id INNER JOIN customers cu ON cu.id = c.customer_id ORDER BY e.updated_at DESC LIMIT 30'),
+        ], 'layouts/admin');
+    }
+
     public function mofa(Request $request): Response
     {
         return $this->view('admin/process/mofa', [
@@ -65,7 +78,7 @@ final class ProcessController extends Controller
         }
         flash('success', __('admin.saved'));
 
-        return $this->redirect('/admin/cases/' . $id);
+        return $this->redirect('/admin/cases/' . $id . '#processing');
     }
 
     public function saveEmbassy(Request $request, string $id): Response
@@ -90,6 +103,6 @@ final class ProcessController extends Controller
         }
         flash('success', __('admin.saved'));
 
-        return $this->redirect('/admin/cases/' . $id);
+        return $this->redirect('/admin/cases/' . $id . '#processing');
     }
 }

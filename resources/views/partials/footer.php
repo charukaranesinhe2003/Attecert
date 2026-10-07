@@ -22,7 +22,11 @@
         <div>
             <h2><?= e(__('footer.company')) ?></h2>
             <a href="<?= e(url('/about')) ?>"><?= e(__('nav.about')) ?></a>
-            <a href="<?= e(url('/contact')) ?>"><?= e(__('nav.contact')) ?></a>
+            <?php if (account_customer()): ?>
+                <a href="<?= e(url('/support')) ?>"><?= e(__('nav.support')) ?></a>
+            <?php else: ?>
+                <a href="<?= e(url('/contact')) ?>"><?= e(__('nav.contact')) ?></a>
+            <?php endif; ?>
             <a href="<?= e(url('/faq')) ?>"><?= e(__('nav.faq')) ?></a>
             <a href="<?= e(url('/guides')) ?>"><?= e(__('nav.guides')) ?></a>
         </div>

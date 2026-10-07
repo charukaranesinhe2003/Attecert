@@ -118,7 +118,7 @@ final class AuthService
 
     public function homePath(): string
     {
-        return $this->isStaff() ? '/admin' : '/portal';
+        return $this->isStaff() ? '/admin' : '/account';
     }
 
     public function attempt(string $email, string $password, string $ip): array
@@ -252,13 +252,23 @@ final class AuthService
         return true;
     }
 
-    public function updateProfile(int $userId, string $name, string $phone, string $locale): void
+    public function updateProfile(int $userId, string $name, string $phone, string $locale, array $extra = []): array
     {
-        $this->db->run('UPDATE users SET name = ?, phone = ?, locale = ? WHERE id = ?', [$name, $phone, $locale, $userId]);
-        $this->db->run('UPDATE customers SET name = ?, phone = ? WHERE user_id = ?', [$name, $phone, $userId]);
+        $whatsapp = $extra['whatsapp'] ?? null;
+        $address = $extra['address'] ?? null;
+        $city = $extra['city'] ?? null;
+        $this->db->run('UPDATE users SET name = ?, phone = ?, locale = ? WHERE id = ?', [$name, $phone !== '' ? $phone : null, $locale, $userId]);
+        $this->db->run(
+            'UPDATE customers SET name = ?, phone = ?, whatsapp = ?, address = ?, city = ? WHERE user_id = ?',
+            [$name, $phone !== '' ? $phone : null, $whatsapp !== '' ? $whatsapp : null, $address !== '' ? $address : null, $city !== '' ? $city : null, $userId]
+        );
         $_SESSION['locale'] = $locale;
         $this->loaded = false;
+        $this->customerLoaded = false;
+        $this->customer = null;
         $this->audit->log($userId, 'profile_updated', 'user', $userId);
+
+        return $this->customer() ?? [];
     }
 
     public function updatePassword(int $userId, string $current, string $next): bool

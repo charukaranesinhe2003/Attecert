@@ -28,12 +28,13 @@ final class InvoiceController extends Controller
         return $this->view('customer/invoices', [
             'title' => __('portal.invoices'),
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'invoices',
             'invoices' => $this->db->fetchAll(
                 'SELECT i.*, c.number AS case_number FROM invoices i INNER JOIN cases c ON c.id = i.case_id WHERE i.customer_id = ? ORDER BY i.created_at DESC',
                 [(int) $this->auth->customer()['id']]
             ),
-        ], 'layouts/customer');
+        ]);
     }
 
     public function show(Request $request, string $id): Response
@@ -43,9 +44,10 @@ final class InvoiceController extends Controller
         return $this->view('customer/invoice', [
             'title' => $bundle['invoice']['number'],
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'invoices',
             'bundle' => $bundle,
-        ], 'layouts/customer');
+        ]);
     }
 
     public function pdf(Request $request, string $id): Response
@@ -66,9 +68,10 @@ final class InvoiceController extends Controller
         return $this->view('customer/payments', [
             'title' => __('portal.payments'),
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'payments',
             'payments' => $rows,
-        ], 'layouts/customer');
+        ]);
     }
 
     private function owned(int $id): array

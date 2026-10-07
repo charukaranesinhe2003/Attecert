@@ -47,7 +47,7 @@ $translation = (int) $db->fetchColumn("SELECT id FROM services WHERE code = 'TRA
 $mofa = (int) $db->fetchColumn("SELECT id FROM services WHERE code = 'MOFA-ATT'");
 $apostille = (int) $db->fetchColumn("SELECT id FROM services WHERE code = 'APOS'");
 
-$requestId = $intake->quote([
+$quote = $intake->quote([
     'name' => 'Kasun Perera',
     'email' => $email,
     'phone' => '+94770001111',
@@ -57,7 +57,8 @@ $requestId = $intake->quote([
     'document_count' => 1,
     'message' => 'Degree certificate for UAE employment.',
 ], [$translation, $mofa, $apostille], []);
-$check($requestId > 0, 'quote request stored');
+$requestId = (int) $quote['id'];
+$check($requestId > 0 && str_starts_with((string) $quote['number'], 'ATT-'), 'quote request stored with tracking code');
 
 $caseId = $cases->createFromQuote($requestId, $adminId);
 $case = $cases->find($caseId);

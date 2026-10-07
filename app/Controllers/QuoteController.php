@@ -47,9 +47,15 @@ final class QuoteController extends Controller
         if (empty($request->input('consent'))) {
             throw new \App\Core\ValidationException(['consent' => __('validation.consent')], $request->all());
         }
+        if ($customer = account_customer()) {
+            $data['email'] = $customer['email'];
+            $data['name'] = trim((string) $data['name']) !== '' ? $data['name'] : $customer['name'];
+            $data['phone'] = trim((string) ($data['phone'] ?? '')) !== '' ? $data['phone'] : (string) $customer['phone'];
+        }
         $serviceIds = array_map('intval', (array) $request->input('services', []));
-        $this->intake->quote($data, $serviceIds, $request->files('attachments'));
-        flash('success', __('quote.sent'));
+        $result = $this->intake->quote($data, $serviceIds, $request->files('attachments'));
+        $_SESSION['_track_popup'] = $result['number'];
+        flash('success', __('quote.sent_with_code', ['number' => $result['number']]));
 
         return $this->redirect('/quote');
     }

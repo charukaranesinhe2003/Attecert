@@ -25,9 +25,10 @@ final class DocumentController extends Controller
         return $this->view('customer/documents', [
             'title' => __('portal.documents'),
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'documents',
             'documents' => $this->documents->forCustomer((int) $this->auth->customer()['id']),
-        ], 'layouts/customer');
+        ]);
     }
 
     public function download(Request $request, string $id): Response

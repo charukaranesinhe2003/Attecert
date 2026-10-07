@@ -18,7 +18,7 @@ final class CaseService
     ) {
     }
 
-    public function create(array $data, array $lines, int $staffId): int
+    public function create(array $data, array $lines, ?int $staffId): int
     {
         return $this->db->transaction(function () use ($data, $lines, $staffId): int {
             $number = $this->numbers->next('case', 'ATT');
@@ -63,7 +63,7 @@ final class CaseService
         });
     }
 
-    public function createFromQuote(int $quoteRequestId, int $staffId): int
+    public function createFromQuote(int $quoteRequestId, ?int $staffId): int
     {
         $request = $this->db->fetch('SELECT * FROM quote_requests WHERE id = ?', [$quoteRequestId]);
         if ($request === null) {
@@ -75,11 +75,21 @@ final class CaseService
         $customerId = $this->ensureCustomer($request, $staffId);
         $services = $this->db->fetchAll('SELECT service_id FROM quote_request_services WHERE quote_request_id = ?', [$quoteRequestId]);
         $lines = array_map(static fn (array $row): array => ['service_id' => $row['service_id'], 'quantity' => $request['document_count'] ?: 1], $services);
+        $documentTitle = 'Document request';
+        if (!empty($request['document_type_id'])) {
+            $typeName = $this->db->fetchColumn(
+                'SELECT name FROM document_type_translations WHERE document_type_id = ? AND locale = \'en\'',
+                [(int) $request['document_type_id']]
+            );
+            if (is_string($typeName) && $typeName !== '') {
+                $documentTitle = $typeName;
+            }
+        }
         $caseId = $this->create([
             'customer_id' => $customerId,
             'country_id' => $request['country_id'],
             'document_type_id' => $request['document_type_id'],
-            'document_title' => 'Document request',
+            'document_title' => $documentTitle,
             'summary' => $request['message'],
             'source' => 'quote_request',
             'quote_request_id' => $quoteRequestId,
@@ -105,7 +115,7 @@ final class CaseService
         return $caseId;
     }
 
-    public function ensureCustomer(array $request, int $staffId): int
+    public function ensureCustomer(array $request, ?int $staffId): int
     {
         $email = mb_strtolower(trim((string) $request['email']));
         $existing = $this->db->fetch('SELECT * FROM customers WHERE email = ? AND deleted_at IS NULL ORDER BY id LIMIT 1', [$email]);
@@ -139,9 +149,11 @@ final class CaseService
     public function find(int $id): ?array
     {
         $case = $this->db->fetch(
-            'SELECT c.*, cu.name AS customer_name, cu.email AS customer_email, cu.phone AS customer_phone, cu.user_id,
+            'SELECT c.*, cu.name AS customer_name, cu.email AS customer_email, cu.phone AS customer_phone,
+                    cu.whatsapp AS customer_whatsapp, cu.user_id,
                     co.slug AS country_slug, ct.name AS country_name, dt.code AS document_code,
-                    dtt.name AS document_type_name, s.code AS status_code, s.badge_tone, st.name AS status_name
+                    dtt.name AS document_type_name, s.code AS status_code, s.badge_tone, st.name AS status_name,
+                    au.name AS assignee_name
              FROM cases c
              INNER JOIN customers cu ON cu.id = c.customer_id
              LEFT JOIN countries co ON co.id = c.country_id
@@ -150,6 +162,7 @@ final class CaseService
              LEFT JOIN document_type_translations dtt ON dtt.document_type_id = dt.id AND dtt.locale = ?
              INNER JOIN workflow_statuses s ON s.id = c.status_id
              LEFT JOIN workflow_status_translations st ON st.status_id = s.id AND st.locale = ?
+             LEFT JOIN users au ON au.id = c.assigned_to
              WHERE c.id = ? AND c.deleted_at IS NULL',
             [locale(), locale(), locale(), $id]
         );

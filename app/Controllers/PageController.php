@@ -118,6 +118,10 @@ final class PageController extends Controller
 
     public function contact(): Response
     {
+        if (account_customer() !== null) {
+            return $this->redirect('/support');
+        }
+
         return $this->view('public/contact', [
             'title' => __('pages.contact'),
             'description' => __('pages.contact_lead'),
@@ -134,6 +138,9 @@ final class PageController extends Controller
             'subject' => 'nullable|max:180',
             'message' => 'required|min:10|max:4000',
         ]);
+        if (account_customer() !== null) {
+            return $this->redirect('/support');
+        }
         $this->intake->contact($data);
         flash('success', __('contact.sent'));
 

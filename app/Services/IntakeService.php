@@ -12,11 +12,13 @@ final class IntakeService
         private Database $db,
         private MailService $mail,
         private DocumentService $documents,
-        private AuditService $audit
+        private AuditService $audit,
+        private CaseService $cases,
+        private NotificationService $notifications
     ) {
     }
 
-    public function quote(array $data, array $serviceIds, array $files): int
+    public function quote(array $data, array $serviceIds, array $files): array
     {
         $this->throttle('quote');
         $id = $this->db->transaction(function () use ($data, $serviceIds): int {
@@ -44,29 +46,56 @@ final class IntakeService
             return $requestId;
         });
         foreach ($files as $file) {
-            $this->documents->store(null, $id, $file, 'customer', 'enquiry', 'Quote request attachment', false, null);
+            $this->documents->store(null, $id, $file, 'customer', 'enquiry', 'Customer submitted document', false, null);
+        }
+        $caseId = $this->cases->createFromQuote($id, null);
+        $this->db->run('UPDATE documents SET case_id = ? WHERE quote_request_id = ? AND case_id IS NULL', [$caseId, $id]);
+        $case = $this->db->fetch(
+            'SELECT c.number, cu.user_id, cu.name FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id WHERE c.id = ?',
+            [$caseId]
+        );
+        $number = (string) ($case['number'] ?? '');
+        if (!empty($case['user_id']) && $number !== '') {
+            $this->notifications->notify(
+                (int) $case['user_id'],
+                __('notifications.tracking_title', ['number' => $number]),
+                __('notifications.tracking_body', ['number' => $number]),
+                '/account'
+            );
         }
         $this->mail->send(
             $data['email'],
             __('mail.quote_request_subject'),
             'quote-request',
-            ['name' => $data['name']],
+            ['name' => $data['name'], 'number' => $number],
             'quote_request',
             $id
         );
-        $this->audit->log(null, 'quote_requested', 'quote_request', $id);
+        $this->audit->log($case['user_id'] ?? null, 'quote_requested', 'quote_request', $id, ['case_id' => $caseId, 'number' => $number]);
 
-        return $id;
+        return ['id' => $id, 'case_id' => $caseId, 'number' => $number];
     }
 
-    public function contact(array $data): int
+    public function contact(array $data, array $account = []): int
     {
         $this->throttle('contact');
+        $source = ($account['source'] ?? 'guest') === 'support' ? 'support' : 'guest';
         $id = $this->db->insert(
-            'INSERT INTO contact_messages (name, email, phone, subject, message) VALUES (?, ?, ?, ?, ?)',
-            [$data['name'], mb_strtolower($data['email']), $data['phone'] ?? null, $data['subject'] ?? null, $data['message']]
+            'INSERT INTO contact_messages (name, email, phone, subject, message, status, source, user_id, customer_id)
+             VALUES (?, ?, ?, ?, ?, \'new\', ?, ?, ?)',
+            [
+                $data['name'],
+                mb_strtolower($data['email']),
+                $data['phone'] ?? null,
+                $data['subject'] ?? null,
+                $data['message'],
+                $source,
+                $account['user_id'] ?? null,
+                $account['customer_id'] ?? null,
+            ]
         );
         $this->mail->send($data['email'], __('mail.contact_subject'), 'contact-received', ['name' => $data['name']], 'contact', $id);
+        $this->audit->log($account['user_id'] ?? null, $source === 'support' ? 'support_message' : 'contact_message', 'contact_message', $id);
 
         return $id;
     }

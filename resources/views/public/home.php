@@ -251,7 +251,7 @@
                 <li><?= icon('clock', 'icon icon-sm') ?> <?= e(setting('hours', '')) ?></li>
             </ul>
         </div>
-        <form class="quote-card" method="post" action="<?= e(url('/quote')) ?>">
+        <form class="quote-card" method="post" action="<?= e(url('/quote')) ?>" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <div class="quote-card-head">
                 <h3><?= e(__('quote.form_title')) ?></h3>
@@ -281,6 +281,7 @@
                     </select>
                 </label>
                 <label class="span-2"><?= e(__('fields.message')) ?><textarea name="message" rows="4"><?= e((string) old('message')) ?></textarea></label>
+            <label class="span-2"><?= e(__('fields.attachments')) ?><input type="file" name="attachments[]" accept=".pdf,.jpg,.jpeg,.png,.webp"></label>
             </div>
             <label class="consent"><input type="checkbox" name="consent" value="1" required> <?= e(__('quote.consent')) ?></label>
             <button class="btn btn-primary btn-block" type="submit"><?= e(__('quote.submit')) ?></button>

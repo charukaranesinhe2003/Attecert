@@ -1,115 +1,469 @@
-<p><strong><?= e($case['customer_name']) ?></strong> · <?= e($case['customer_email']) ?> · <?= e($case['document_title']) ?></p>
-<p><?= status_badge($case['status_name'] ?: $case['status_code'], $case['badge_tone']) ?> <?= e($case['country_name'] ?? '') ?></p>
-<div class="admin-grid">
-    <section class="card-block">
-        <h2><?= e(__('admin.details')) ?></h2>
-        <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'])) ?>"><?= csrf_field() ?>
-            <label><?= e(__('fields.document_title')) ?><input name="document_title" value="<?= e($case['document_title']) ?>" required></label>
-            <label><?= e(__('fields.country_id')) ?><select name="country_id"><option value=""></option><?php foreach ($countries as $country): ?><option value="<?= e((string) $country['id']) ?>" <?= selected($case['country_id'], $country['id']) ?>><?= e($country['name']) ?></option><?php endforeach; ?></select></label>
-            <label><?= e(__('fields.document_type_id')) ?><select name="document_type_id"><option value=""></option><?php foreach ($documentTypes as $type): ?><option value="<?= e((string) $type['id']) ?>" <?= selected($case['document_type_id'], $type['id']) ?>><?= e($type['name']) ?></option><?php endforeach; ?></select></label>
-            <label><?= e(__('fields.summary')) ?><textarea name="summary" rows="3"><?= e((string) $case['summary']) ?></textarea></label>
-            <label><?= e(__('fields.estimated_next')) ?><input name="estimated_next" value="<?= e((string) $case['estimated_next']) ?>"></label>
-            <label><?= e(__('fields.internal_notes')) ?><textarea name="internal_notes" rows="3"><?= e((string) $case['internal_notes']) ?></textarea></label>
-            <label><?= e(__('fields.customer_notes')) ?><textarea name="customer_notes" rows="3"><?= e((string) $case['customer_notes']) ?></textarea></label>
-            <label><?= e(__('fields.assigned_to')) ?><select name="assigned_to"><option value=""></option><?php foreach ($staff as $person): ?><option value="<?= e((string) $person['id']) ?>" <?= selected($case['assigned_to'], $person['id']) ?>><?= e($person['name']) ?></option><?php endforeach; ?></select></label>
-            <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
-        </form>
-    </section>
-    <section class="card-block">
-        <h2><?= e(__('admin.status')) ?></h2>
-        <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/status')) ?>"><?= csrf_field() ?>
-            <label><?= e(__('fields.status')) ?><select name="status"><?php foreach ($statuses as $status): ?><option value="<?= e($status['code']) ?>" <?= selected($case['status_code'], $status['code']) ?>><?= e($status['name']) ?></option><?php endforeach; ?></select></label>
-            <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="3"></textarea></label>
-            <label class="consent"><input type="checkbox" name="customer_visible" value="1" checked> <?= e(__('admin.visible')) ?></label>
-            <button class="btn btn-primary" type="submit"><?= e(__('admin.update_status')) ?></button>
-        </form>
-        <ol class="timeline"><?php foreach ($case['history'] as $item): ?><li><i></i><div><strong><?= e($item['name']) ?></strong> · <?= e(format_datetime($item['created_at'])) ?><?php if ($item['notes']): ?><p><?= e($item['notes']) ?></p><?php endif; ?></div></li><?php endforeach; ?></ol>
-    </section>
-</div>
-<section class="card-block">
-    <h2><?= e(__('admin.services')) ?></h2>
-    <form method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/services')) ?>"><?= csrf_field() ?>
-        <?php foreach ($services as $service): $selected = null; foreach ($case['services'] as $line) { if ((int) $line['service_id'] === (int) $service['id']) { $selected = $line; } } ?>
-            <label class="consent"><input type="checkbox" name="service_id[]" value="<?= e((string) $service['id']) ?>" <?= $selected ? 'checked' : '' ?>> <?= e($service['name']) ?> (<?= e($service['pricing_type']) ?><?php if ($service['pricing_type'] === 'fixed'): ?> <?= e(money($service['fixed_price'], $service['currency'])) ?><?php endif; ?>)</label>
-            <input type="hidden" name="quantity[<?= e((string) $service['id']) ?>]" value="<?= e((string) ($selected['quantity'] ?? 1)) ?>">
-            <input type="hidden" name="unit_price[<?= e((string) $service['id']) ?>]" value="<?= e((string) ($selected['unit_price'] ?? $service['fixed_price'] ?? '')) ?>">
-        <?php endforeach; ?>
-        <button class="btn btn-ghost" type="submit"><?= e(__('actions.save')) ?></button>
-    </form>
-</section>
-<section class="card-block" data-quote-builder>
-    <h2><?= e(__('admin.quotation')) ?></h2>
-    <form method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/quotation')) ?>"><?= csrf_field() ?>
-        <?php foreach ($services as $service): $selected = null; foreach ($case['services'] as $line) { if ((int) $line['service_id'] === (int) $service['id']) { $selected = $line; } } $price = $selected['unit_price'] ?? ($service['pricing_type'] === 'fixed' ? $service['fixed_price'] : ''); ?>
-            <div class="form-grid" data-line>
-                <label class="consent"><input type="checkbox" name="lines[<?= e((string) $service['id']) ?>][selected]" value="1" <?= $selected ? 'checked' : '' ?>> <?= e($service['name']) ?></label>
-                <input type="hidden" name="lines[<?= e((string) $service['id']) ?>][description]" value="<?= e($service['name']) ?>">
-                <label><?= e(__('fields.quantity')) ?><input data-qty name="lines[<?= e((string) $service['id']) ?>][qty]" value="<?= e((string) ($selected['quantity'] ?? 1)) ?>"></label>
-                <label><?= e(__('fields.price')) ?><input data-price name="lines[<?= e((string) $service['id']) ?>][price]" value="<?= e((string) $price) ?>" <?= $service['pricing_type'] === 'fixed' ? 'readonly' : '' ?>></label>
-                <strong data-line-total>0.00</strong>
+<?php
+use App\Helpers\NextStep;
+
+$next = $nextStep ?? NextStep::forCase($case, $quotations, $invoices, $mofa, $embassy);
+$statusCode = (string) $case['status_code'];
+$progress = [
+    ['key' => 'received', 'label' => __('admin.step_received'), 'done' => true],
+    ['key' => 'documents', 'label' => __('admin.step_documents'), 'done' => !in_array($statusCode, ['new', 'awaiting_documents'], true)],
+    ['key' => 'quotation', 'label' => __('admin.step_quotation'), 'done' => $quotations !== [] && !in_array((string) ($quotations[0]['status'] ?? ''), ['draft', 'sent', 'viewed', 'rejected', 'expired'], true)],
+    ['key' => 'payment', 'label' => __('admin.step_payment'), 'done' => in_array((string) (($invoices[0]['status'] ?? '')), ['paid'], true) || in_array($statusCode, ['payment_received', 'verification', 'mofa_processing', 'submitted_to_mofa', 'mofa_completed', 'embassy_processing', 'submitted_to_embassy', 'embassy_completed', 'ready_for_collection', 'ready_for_delivery', 'completed'], true)],
+    ['key' => 'mofa', 'label' => __('admin.step_mofa'), 'done' => in_array(($mofa['status'] ?? ''), ['completed'], true) || in_array($statusCode, ['mofa_completed', 'embassy_processing', 'submitted_to_embassy', 'embassy_completed', 'ready_for_collection', 'ready_for_delivery', 'completed'], true)],
+    ['key' => 'embassy', 'label' => __('admin.step_embassy'), 'done' => in_array(($embassy['status'] ?? ''), ['completed'], true) || in_array($statusCode, ['embassy_completed', 'ready_for_collection', 'ready_for_delivery', 'completed'], true)],
+    ['key' => 'completed', 'label' => __('admin.step_completed'), 'done' => $statusCode === 'completed'],
+];
+$currentFound = false;
+foreach ($progress as $i => $step) {
+    if (!$step['done'] && !$currentFound) {
+        $progress[$i]['current'] = true;
+        $currentFound = true;
+    } else {
+        $progress[$i]['current'] = false;
+    }
+}
+if (!$currentFound && $statusCode === 'completed') {
+    $progress[count($progress) - 1]['current'] = true;
+}
+$docsByCategory = ['customer' => [], 'internal' => [], 'completed' => []];
+foreach ($documents as $doc) {
+    $cat = (string) ($doc['category'] ?? 'internal');
+    if (!isset($docsByCategory[$cat])) {
+        $cat = 'internal';
+    }
+    $docsByCategory[$cat][] = $doc;
+}
+$latestQuote = $quotations[0] ?? null;
+$latestInvoice = $invoices[0] ?? null;
+$outstanding = 0.0;
+foreach ($invoices as $invoice) {
+    if (!in_array($invoice['status'], ['cancelled', 'paid'], true)) {
+        $outstanding += (float) $invoice['amount_due'];
+    }
+}
+?>
+<article class="case-workspace">
+    <header class="case-hero">
+        <div class="case-hero-top">
+            <div>
+                <h1><?= e($case['number']) ?></h1>
+                <div class="case-hero-meta">
+                    <span><?= e((string) ($case['country_name'] ?? '—')) ?> · <?= e($case['document_title']) ?></span>
+                    <span><?= e(__('admin.customers')) ?>: <strong><?= e($case['customer_name']) ?></strong></span>
+                    <span><?= status_badge($case['status_name'] ?: $case['status_code'], $case['badge_tone']) ?></span>
+                </div>
             </div>
+            <div class="actions">
+                <a class="btn btn-primary" href="#overview" data-jump-tab="overview"><?= e(__('admin.update_status')) ?></a>
+                <a class="btn btn-ghost" href="#documents" data-jump-tab="documents"><?= e(__('admin.upload_document')) ?></a>
+                <a class="btn btn-ghost" href="<?= e(url('/admin/customers/' . $case['customer_id'])) ?>"><?= e(__('admin.customers')) ?></a>
+            </div>
+        </div>
+        <div class="case-next">
+            <div>
+                <strong><?= e(__('admin.next_action')) ?></strong>
+                <p><?= e($next['label']) ?></p>
+            </div>
+            <a class="btn btn-primary" href="#<?= e($next['tab']) ?>" data-jump-tab="<?= e($next['tab']) ?>"><?= e(__('admin.open_next')) ?></a>
+        </div>
+    </header>
+
+    <nav class="case-tabs" data-case-tabs aria-label="Case sections">
+        <button type="button" data-tab="overview" class="is-active"><?= e(__('admin.tab_overview')) ?></button>
+        <button type="button" data-tab="quote"><?= e(__('admin.tab_quote')) ?></button>
+        <button type="button" data-tab="documents"><?= e(__('admin.tab_documents')) ?></button>
+        <button type="button" data-tab="processing"><?= e(__('admin.tab_processing')) ?></button>
+        <button type="button" data-tab="finance"><?= e(__('admin.tab_finance')) ?></button>
+        <button type="button" data-tab="activity"><?= e(__('admin.tab_activity')) ?></button>
+    </nav>
+
+    <section class="case-panel" data-panel="overview">
+        <div class="case-summary-grid">
+            <section class="card-block">
+                <h2><?= e(__('admin.customers')) ?></h2>
+                <dl class="kv">
+                    <div><dt><?= e(__('fields.name')) ?></dt><dd><?= e($case['customer_name']) ?></dd></div>
+                    <div><dt><?= e(__('fields.email')) ?></dt><dd><?= e($case['customer_email']) ?></dd></div>
+                    <div><dt><?= e(__('fields.phone')) ?></dt><dd><?= e((string) ($case['customer_phone'] ?: '—')) ?></dd></div>
+                    <div><dt><?= e(__('fields.whatsapp')) ?></dt><dd><?= e((string) ($case['customer_whatsapp'] ?: '—')) ?></dd></div>
+                </dl>
+            </section>
+            <section class="card-block">
+                <h2><?= e(__('admin.cases')) ?></h2>
+                <dl class="kv">
+                    <div><dt><?= e(__('fields.country_id')) ?></dt><dd><?= e((string) ($case['country_name'] ?: '—')) ?></dd></div>
+                    <div><dt><?= e(__('fields.document_type_id')) ?></dt><dd><?= e((string) ($case['document_type_name'] ?: $case['document_title'])) ?></dd></div>
+                    <div><dt><?= e(__('fields.date')) ?></dt><dd><?= e(format_datetime($case['created_at'])) ?></dd></div>
+                    <div><dt><?= e(__('fields.assigned_to')) ?></dt><dd><?= e((string) ($case['assignee_name'] ?: __('admin.unassigned'))) ?></dd></div>
+                    <div><dt><?= e(__('fields.priority')) ?></dt><dd><?= e((string) $case['priority']) ?></dd></div>
+                </dl>
+            </section>
+            <section class="card-block">
+                <h2><?= e(__('admin.current_progress')) ?></h2>
+                <ol class="progress-track">
+                    <?php foreach ($progress as $step): ?>
+                        <li class="<?= $step['done'] ? 'is-done' : '' ?> <?= !empty($step['current']) ? 'is-current' : '' ?>">
+                            <i></i>
+                            <span><?= e($step['label']) ?></span>
+                        </li>
+                    <?php endforeach; ?>
+                </ol>
+            </section>
+        </div>
+
+        <div class="admin-grid">
+            <section class="card-block">
+                <h2><?= e(__('admin.details')) ?></h2>
+                <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'])) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                    <div class="form-grid">
+                        <label><?= e(__('fields.document_title')) ?><input name="document_title" value="<?= e($case['document_title']) ?>" required></label>
+                        <label><?= e(__('fields.country_id')) ?><select name="country_id"><option value=""></option><?php foreach ($countries as $country): ?><option value="<?= e((string) $country['id']) ?>" <?= selected($case['country_id'], $country['id']) ?>><?= e($country['name']) ?></option><?php endforeach; ?></select></label>
+                        <label><?= e(__('fields.document_type_id')) ?><select name="document_type_id"><option value=""></option><?php foreach ($documentTypes as $type): ?><option value="<?= e((string) $type['id']) ?>" <?= selected($case['document_type_id'], $type['id']) ?>><?= e($type['name']) ?></option><?php endforeach; ?></select></label>
+                        <label><?= e(__('fields.assigned_to')) ?><select name="assigned_to"><option value=""></option><?php foreach ($staff as $person): ?><option value="<?= e((string) $person['id']) ?>" <?= selected($case['assigned_to'], $person['id']) ?>><?= e($person['name']) ?></option><?php endforeach; ?></select></label>
+                    </div>
+                    <label><?= e(__('fields.summary')) ?><textarea name="summary" rows="3"><?= e((string) $case['summary']) ?></textarea></label>
+                    <label><?= e(__('fields.estimated_next')) ?><input name="estimated_next" value="<?= e((string) $case['estimated_next']) ?>"></label>
+                    <label><?= e(__('fields.internal_notes')) ?><textarea name="internal_notes" rows="3"><?= e((string) $case['internal_notes']) ?></textarea></label>
+                    <label><?= e(__('fields.customer_notes')) ?><textarea name="customer_notes" rows="3"><?= e((string) $case['customer_notes']) ?></textarea></label>
+                    <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
+                </form>
+            </section>
+            <section class="card-block">
+                <h2><?= e(__('admin.update_status')) ?></h2>
+                <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/status')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                    <label><?= e(__('fields.status')) ?><select name="status"><?php foreach ($statuses as $status): ?><option value="<?= e($status['code']) ?>" <?= selected($case['status_code'], $status['code']) ?>><?= e($status['name']) ?></option><?php endforeach; ?></select></label>
+                    <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="3"></textarea></label>
+                    <label class="consent"><input type="checkbox" name="customer_visible" value="1" checked> <?= e(__('admin.visible')) ?></label>
+                    <button class="btn btn-primary" type="submit"><?= e(__('admin.update_status')) ?></button>
+                </form>
+                <?php if (trim((string) $case['internal_notes']) !== ''): ?>
+                    <div class="process-card" style="margin-top:1rem">
+                        <h3><?= e(__('admin.important_notes')) ?></h3>
+                        <p><?= e((string) $case['internal_notes']) ?></p>
+                    </div>
+                <?php endif; ?>
+            </section>
+        </div>
+    </section>
+
+    <section class="case-panel" data-panel="quote" hidden>
+        <section class="card-block">
+            <div class="card-head"><h2><?= e(__('admin.services')) ?></h2></div>
+            <form method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/services')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                <?php foreach ($services as $service):
+                    $selected = null;
+                    foreach ($case['services'] as $line) {
+                        if ((int) $line['service_id'] === (int) $service['id']) {
+                            $selected = $line;
+                        }
+                    }
+                ?>
+                    <label class="consent">
+                        <input type="checkbox" name="service_id[]" value="<?= e((string) $service['id']) ?>" <?= $selected ? 'checked' : '' ?>>
+                        <?= e($service['name']) ?>
+                        <?php if ($service['pricing_type'] === 'fixed'): ?> · <?= e(money($service['fixed_price'], $service['currency'])) ?><?php else: ?> · <?= e(__('fields.custom')) ?><?php endif; ?>
+                    </label>
+                    <input type="hidden" name="quantity[<?= e((string) $service['id']) ?>]" value="<?= e((string) ($selected['quantity'] ?? 1)) ?>">
+                    <input type="hidden" name="unit_price[<?= e((string) $service['id']) ?>]" value="<?= e((string) ($selected['unit_price'] ?? $service['fixed_price'] ?? '')) ?>">
+                <?php endforeach; ?>
+                <div class="actions" style="margin-top:.75rem"><button class="btn btn-ghost" type="submit"><?= e(__('actions.save')) ?></button></div>
+            </form>
+        </section>
+
+        <section class="card-block" data-quote-builder>
+            <div class="card-head"><h2><?= e(__('admin.quotation')) ?></h2></div>
+            <?php if ($latestQuote): ?>
+                <div class="finance-row" style="margin-bottom:1rem">
+                    <div>
+                        <strong><?= e($latestQuote['number']) ?></strong>
+                        <div><?= e($latestQuote['status']) ?><?php if (!empty($latestQuote['version'])): ?> · v<?= (int) $latestQuote['version'] ?><?php endif; ?></div>
+                    </div>
+                    <div>
+                        <strong><?= e(money($latestQuote['total'], $latestQuote['currency'])) ?></strong>
+                        <div class="actions" style="margin-top:.35rem">
+                            <a class="btn btn-ghost" href="<?= e(url('/admin/quotations/' . $latestQuote['id'])) ?>"><?= e(__('actions.view')) ?></a>
+                            <a class="btn btn-ghost" href="<?= e(url('/admin/quotations/' . $latestQuote['id'] . '/pdf')) ?>"><?= e(__('actions.download')) ?></a>
+                            <?php if (in_array($latestQuote['status'], ['draft', 'sent', 'viewed'], true)): ?>
+                                <form method="post" action="<?= e(url('/admin/quotations/' . $latestQuote['id'] . '/send')) ?>" data-busy="<?= e(__('admin.sending')) ?>"><?= csrf_field() ?><input type="hidden" name="return_case" value="<?= e((string) $case['id']) ?>"><button class="btn btn-primary" type="submit"><?= e(__('actions.email')) ?></button></form>
+                            <?php endif; ?>
+                            <?php if (in_array($latestQuote['status'], ['accepted'], true)): ?>
+                                <form method="post" action="<?= e(url('/admin/quotations/' . $latestQuote['id'] . '/invoice')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?><button class="btn btn-primary" type="submit"><?= e(__('admin.create_invoice')) ?></button></form>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+            <form method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/quotation')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                <?php if ($latestQuote && in_array($latestQuote['status'], ['draft'], true)): ?>
+                    <input type="hidden" name="quotation_id" value="<?= e((string) $latestQuote['id']) ?>">
+                <?php endif; ?>
+                <div class="table-wrap"><table class="quote-table">
+                    <thead><tr><th><?= e(__('admin.services')) ?></th><th><?= e(__('fields.quantity')) ?></th><th><?= e(__('fields.price')) ?></th><th><?= e(__('fields.total')) ?></th></tr></thead>
+                    <tbody>
+                    <?php foreach ($services as $service):
+                        $selected = null;
+                        foreach ($case['services'] as $line) {
+                            if ((int) $line['service_id'] === (int) $service['id']) {
+                                $selected = $line;
+                            }
+                        }
+                        $price = $selected['unit_price'] ?? ($service['pricing_type'] === 'fixed' ? $service['fixed_price'] : '');
+                    ?>
+                        <tr data-line>
+                            <td>
+                                <label class="consent">
+                                    <input data-selected type="checkbox" name="lines[<?= e((string) $service['id']) ?>][selected]" value="1" <?= $selected ? 'checked' : '' ?>>
+                                    <?= e($service['name']) ?>
+                                </label>
+                                <input type="hidden" name="lines[<?= e((string) $service['id']) ?>][description]" value="<?= e($service['name']) ?>">
+                            </td>
+                            <td><input data-qty name="lines[<?= e((string) $service['id']) ?>][qty]" value="<?= e((string) ($selected['quantity'] ?? 1)) ?>"></td>
+                            <td><input data-price name="lines[<?= e((string) $service['id']) ?>][price]" value="<?= e((string) $price) ?>" <?= $service['pricing_type'] === 'fixed' ? 'readonly' : '' ?>></td>
+                            <td><strong data-line-total>0.00</strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <tr data-line>
+                        <td><input name="extra_description" placeholder="<?= e(__('fields.additional')) ?>"></td>
+                        <td><input data-qty name="extra_qty" value="1"></td>
+                        <td><input data-price name="extra_price" value="0"></td>
+                        <td><strong data-line-total>0.00</strong></td>
+                    </tr>
+                    </tbody>
+                </table></div>
+                <div class="form-grid">
+                    <label><?= e(__('fields.discount')) ?><input name="discount_amount" value="0"></label>
+                    <label><?= e(__('fields.tax_rate')) ?><input name="tax_rate" value="0"></label>
+                    <label><?= e(__('fields.additional_amount')) ?><input name="additional_amount" value="0"></label>
+                    <label><?= e(__('fields.validity_days')) ?><input name="validity_days" value="<?= e((string) setting('quote_validity_days', 14)) ?>"></label>
+                </div>
+                <div class="quote-total"><span><?= e(__('fields.total')) ?></span><strong data-total>0.00</strong></div>
+                <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="2"></textarea></label>
+                <label><?= e(__('fields.terms')) ?><textarea name="terms" rows="2"><?= e((string) setting('quote_terms', '')) ?></textarea></label>
+                <label class="consent"><input type="checkbox" name="issue" value="1" checked> <?= e(__('admin.issue_quote')) ?></label>
+                <label class="consent"><input type="checkbox" name="email" value="1"> <?= e(__('admin.email_customer')) ?></label>
+                <div class="actions">
+                    <button class="btn btn-primary" type="submit"><?= $latestQuote && $latestQuote['status'] !== 'draft' ? e(__('admin.create_revision')) : e(__('admin.generate_quote')) ?></button>
+                </div>
+            </form>
+            <?php if (count($quotations) > 1): ?>
+                <h3 style="margin-top:1rem"><?= e(__('admin.quote_history')) ?></h3>
+                <ul><?php foreach ($quotations as $quote): ?><li><a href="<?= e(url('/admin/quotations/' . $quote['id'])) ?>"><?= e($quote['number']) ?></a> · <?= e($quote['status']) ?> · <?= e(money($quote['total'], $quote['currency'])) ?></li><?php endforeach; ?></ul>
+            <?php endif; ?>
+        </section>
+    </section>
+
+    <section class="case-panel" data-panel="documents" hidden>
+        <section class="card-block">
+            <div class="card-head"><h2><?= e(__('admin.upload_document')) ?></h2></div>
+            <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/documents')) ?>" enctype="multipart/form-data" data-busy="<?= e(__('admin.uploading')) ?>"><?= csrf_field() ?>
+                <div class="form-grid">
+                    <label><?= e(__('fields.file')) ?><input type="file" name="document" required></label>
+                    <label><?= e(__('fields.category')) ?>
+                        <select name="category" data-doc-category>
+                            <option value="customer"><?= e(__('admin.doc_customer')) ?></option>
+                            <option value="internal"><?= e(__('admin.doc_internal')) ?></option>
+                            <option value="completed"><?= e(__('admin.doc_completed')) ?></option>
+                        </select>
+                    </label>
+                    <label><?= e(__('fields.subcategory')) ?>
+                        <select name="subcategory">
+                            <option value="passport">Passport</option>
+                            <option value="certificate">Certificate</option>
+                            <option value="translation">Translation</option>
+                            <option value="mofa">MOFA</option>
+                            <option value="embassy">Embassy</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </label>
+                    <label><?= e(__('fields.description')) ?><input name="description" placeholder="<?= e(__('fields.display_name')) ?>"></label>
+                </div>
+                <label class="consent"><input type="checkbox" name="customer_visible" value="1" data-doc-visible> <?= e(__('admin.visible')) ?></label>
+                <button class="btn btn-primary" type="submit"><?= e(__('actions.upload')) ?></button>
+            </form>
+        </section>
+        <?php
+        $groups = [
+            'customer' => __('admin.doc_customer'),
+            'internal' => __('admin.doc_internal'),
+            'completed' => __('admin.doc_completed'),
+        ];
+        foreach ($groups as $key => $label):
+            $rows = $docsByCategory[$key] ?? [];
+        ?>
+            <section class="card-block doc-group">
+                <h3><?= e($label) ?></h3>
+                <?php if ($rows === []): ?>
+                    <p class="empty"><?= e(__('empty.documents')) ?></p>
+                <?php else: ?>
+                    <div class="doc-list">
+                        <?php foreach ($rows as $doc): ?>
+                            <div class="doc-row">
+                                <div>
+                                    <strong><?= e($doc['original_name']) ?></strong>
+                                    <span><?= e($doc['subcategory'] ?? '') ?> · <?= e(format_datetime($doc['created_at'])) ?></span>
+                                    <span class="vis-tag <?= (int) $doc['customer_visible'] === 1 ? 'is-public' : '' ?>"><?= (int) $doc['customer_visible'] === 1 ? e(__('admin.visible')) : e(__('admin.private')) ?></span>
+                                </div>
+                                <a class="btn btn-ghost" href="<?= e(url('/admin/documents/' . $doc['id'] . '/download')) ?>"><?= e(__('actions.download')) ?></a>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
         <?php endforeach; ?>
-        <div class="form-grid" data-line>
-            <label><?= e(__('fields.additional')) ?><input name="extra_description" placeholder="<?= e(__('fields.additional')) ?>"></label>
-            <label><?= e(__('fields.quantity')) ?><input data-qty name="extra_qty" value="1"></label>
-            <label><?= e(__('fields.price')) ?><input data-price name="extra_price" value="0"></label>
-            <strong data-line-total>0.00</strong>
-        </div>
-        <div class="form-grid">
-            <label><?= e(__('fields.discount')) ?><input name="discount_amount" value="0"></label>
-            <label><?= e(__('fields.tax_rate')) ?><input name="tax_rate" value="0"></label>
-            <label><?= e(__('fields.additional_amount')) ?><input name="additional_amount" value="0"></label>
-            <label><?= e(__('fields.validity_days')) ?><input name="validity_days" value="<?= e((string) setting('quote_validity_days', 14)) ?>"></label>
-        </div>
-        <p><?= e(__('fields.total')) ?>: <strong data-total>0.00</strong></p>
-        <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="2"></textarea></label>
-        <label><?= e(__('fields.terms')) ?><textarea name="terms" rows="2"><?= e((string) setting('quote_terms', '')) ?></textarea></label>
-        <label class="consent"><input type="checkbox" name="issue" value="1" checked> <?= e(__('admin.issue_quote')) ?></label>
-        <label class="consent"><input type="checkbox" name="email" value="1"> <?= e(__('admin.email_customer')) ?></label>
-        <button class="btn btn-primary" type="submit"><?= e(__('admin.generate_quote')) ?></button>
-    </form>
-    <ul><?php foreach ($quotations as $quote): ?><li><a href="<?= e(url('/admin/quotations/' . $quote['id'])) ?>"><?= e($quote['number']) ?></a> <?= e($quote['status']) ?> <?= e(money($quote['total'], $quote['currency'])) ?></li><?php endforeach; ?></ul>
-</section>
-<section class="card-block">
-    <h2><?= e(__('admin.documents')) ?></h2>
-    <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/documents')) ?>" enctype="multipart/form-data"><?= csrf_field() ?>
-        <label><?= e(__('fields.file')) ?><input type="file" name="document" required></label>
-        <label><?= e(__('fields.category')) ?><select name="category"><option value="customer">Customer submitted</option><option value="internal">Internal</option><option value="completed">Completed</option></select></label>
-        <label><?= e(__('fields.subcategory')) ?><select name="subcategory"><option value="passport">Passport</option><option value="certificate">Certificate</option><option value="translation">Translation</option><option value="mofa">MOFA</option><option value="embassy">Embassy</option><option value="other">Other</option></select></label>
-        <label><?= e(__('fields.description')) ?><input name="description"></label>
-        <label class="consent"><input type="checkbox" name="customer_visible" value="1"> <?= e(__('admin.visible')) ?></label>
-        <button class="btn btn-primary" type="submit"><?= e(__('actions.upload')) ?></button>
-    </form>
-    <ul><?php foreach ($documents as $doc): ?><li><?= e($doc['original_name']) ?> · <?= e($doc['category']) ?> <?php if ((int) $doc['customer_visible'] === 1): ?><?= e(__('admin.visible')) ?><?php endif; ?> <a href="<?= e(url('/admin/documents/' . $doc['id'] . '/download')) ?>"><?= e(__('actions.download')) ?></a></li><?php endforeach; ?></ul>
-</section>
-<div class="admin-grid">
-    <section class="card-block">
-        <h2><?= e(__('admin.mofa')) ?></h2>
-        <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/mofa')) ?>"><?= csrf_field() ?>
-            <label><?= e(__('fields.reference')) ?><input name="reference_no" value="<?= e((string) ($mofa['reference_no'] ?? '')) ?>"></label>
-            <label><?= e(__('fields.status')) ?><select name="status"><option value="not_started">Not started</option><option value="submitted">Submitted</option><option value="processing">Processing</option><option value="completed">Completed</option></select></label>
-            <label><?= e(__('fields.submitted_at')) ?><input type="date" name="submitted_at"></label>
-            <label><?= e(__('fields.expected_at')) ?><input type="date" name="expected_at"></label>
-            <label><?= e(__('fields.completed_at')) ?><input type="date" name="completed_at"></label>
-            <label><?= e(__('fields.notes')) ?><textarea name="notes"></textarea></label>
-            <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin.update_case_status')) ?></label>
-            <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
-        </form>
     </section>
-    <section class="card-block">
-        <h2><?= e(__('admin.embassy')) ?></h2>
-        <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/embassy')) ?>"><?= csrf_field() ?>
-            <label><?= e(__('fields.embassy')) ?><input name="embassy_name" required value="<?= e(($case['country_name'] ?? '') . ' Embassy') ?>"></label>
-            <label><?= e(__('fields.country_id')) ?><select name="country_id"><?php foreach ($countries as $country): ?><option value="<?= e((string) $country['id']) ?>" <?= selected($case['country_id'], $country['id']) ?>><?= e($country['name']) ?></option><?php endforeach; ?></select></label>
-            <label><?= e(__('fields.reference')) ?><input name="reference_no"></label>
-            <label><?= e(__('fields.status')) ?><select name="status"><option value="not_started">Not started</option><option value="submitted">Submitted</option><option value="processing">Processing</option><option value="completed">Completed</option></select></label>
-            <label><?= e(__('fields.submitted_at')) ?><input type="date" name="submitted_at"></label>
-            <label><?= e(__('fields.expected_at')) ?><input type="date" name="expected_at"></label>
-            <label><?= e(__('fields.completed_at')) ?><input type="date" name="completed_at"></label>
-            <label><?= e(__('fields.notes')) ?><textarea name="notes"></textarea></label>
-            <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin.update_case_status')) ?></label>
-            <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
-        </form>
+
+    <section class="case-panel" data-panel="processing" hidden>
+        <div class="admin-grid">
+            <section class="card-block">
+                <h2><?= e(__('admin.mofa')) ?></h2>
+                <div class="process-card">
+                    <h3><?= e(ucfirst((string) ($mofa['status'] ?? 'not_started'))) ?></h3>
+                    <p><?= e(__('fields.reference')) ?>: <?= e((string) ($mofa['reference_no'] ?? '—')) ?></p>
+                    <p><?= e(__('fields.submitted_at')) ?>: <?= e((string) ($mofa['submitted_at'] ?? '—')) ?></p>
+                    <p><?= e(__('fields.expected_at')) ?>: <?= e((string) ($mofa['expected_at'] ?? '—')) ?></p>
+                </div>
+                <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/mofa')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                    <div class="form-grid">
+                        <label><?= e(__('fields.reference')) ?><input name="reference_no" value="<?= e((string) ($mofa['reference_no'] ?? '')) ?>"></label>
+                        <label><?= e(__('fields.status')) ?>
+                            <select name="status">
+                                <?php foreach (['not_started', 'submitted', 'processing', 'completed'] as $st): ?>
+                                    <option value="<?= e($st) ?>" <?= selected($mofa['status'] ?? 'not_started', $st) ?>><?= e(ucfirst(str_replace('_', ' ', $st))) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label><?= e(__('fields.submitted_at')) ?><input type="date" name="submitted_at" value="<?= e((string) ($mofa['submitted_at'] ?? '')) ?>"></label>
+                        <label><?= e(__('fields.expected_at')) ?><input type="date" name="expected_at" value="<?= e((string) ($mofa['expected_at'] ?? '')) ?>"></label>
+                        <label><?= e(__('fields.completed_at')) ?><input type="date" name="completed_at" value="<?= e((string) ($mofa['completed_at'] ?? '')) ?>"></label>
+                    </div>
+                    <label><?= e(__('fields.notes')) ?><textarea name="notes"><?= e((string) ($mofa['notes'] ?? '')) ?></textarea></label>
+                    <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin.update_case_status')) ?></label>
+                    <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
+                </form>
+            </section>
+            <section class="card-block">
+                <h2><?= e(__('admin.embassy')) ?></h2>
+                <div class="process-card">
+                    <h3><?= e(ucfirst((string) ($embassy['status'] ?? 'not_started'))) ?></h3>
+                    <p><?= e(__('fields.reference')) ?>: <?= e((string) ($embassy['reference_no'] ?? '—')) ?></p>
+                    <p><?= e(__('fields.submitted_at')) ?>: <?= e((string) ($embassy['submitted_at'] ?? '—')) ?></p>
+                    <p><?= e(__('fields.expected_at')) ?>: <?= e((string) ($embassy['expected_at'] ?? '—')) ?></p>
+                </div>
+                <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/embassy')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                    <div class="form-grid">
+                        <label><?= e(__('fields.embassy')) ?><input name="embassy_name" required value="<?= e((string) ($embassy['embassy_name'] ?? (($case['country_name'] ?? '') . ' Embassy'))) ?>"></label>
+                        <label><?= e(__('fields.country_id')) ?><select name="country_id"><?php foreach ($countries as $country): ?><option value="<?= e((string) $country['id']) ?>" <?= selected($case['country_id'], $country['id']) ?>><?= e($country['name']) ?></option><?php endforeach; ?></select></label>
+                        <label><?= e(__('fields.reference')) ?><input name="reference_no" value="<?= e((string) ($embassy['reference_no'] ?? '')) ?>"></label>
+                        <label><?= e(__('fields.status')) ?>
+                            <select name="status">
+                                <?php foreach (['not_started', 'submitted', 'processing', 'completed'] as $st): ?>
+                                    <option value="<?= e($st) ?>" <?= selected($embassy['status'] ?? 'not_started', $st) ?>><?= e(ucfirst(str_replace('_', ' ', $st))) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label><?= e(__('fields.submitted_at')) ?><input type="date" name="submitted_at" value="<?= e((string) ($embassy['submitted_at'] ?? '')) ?>"></label>
+                        <label><?= e(__('fields.expected_at')) ?><input type="date" name="expected_at" value="<?= e((string) ($embassy['expected_at'] ?? '')) ?>"></label>
+                        <label><?= e(__('fields.completed_at')) ?><input type="date" name="completed_at" value="<?= e((string) ($embassy['completed_at'] ?? '')) ?>"></label>
+                    </div>
+                    <label><?= e(__('fields.notes')) ?><textarea name="notes"><?= e((string) ($embassy['notes'] ?? '')) ?></textarea></label>
+                    <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin.update_case_status')) ?></label>
+                    <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
+                </form>
+            </section>
+        </div>
     </section>
-</div>
-<section class="card-block"><h2><?= e(__('admin.invoices')) ?></h2><ul><?php foreach ($invoices as $invoice): ?><li><a href="<?= e(url('/admin/invoices/' . $invoice['id'])) ?>"><?= e($invoice['number']) ?></a> <?= e($invoice['status']) ?> <?= e(money($invoice['total'], $invoice['currency'])) ?></li><?php endforeach; ?></ul></section>
+
+    <section class="case-panel" data-panel="finance" hidden>
+        <section class="card-block">
+            <div class="card-head"><h2><?= e(__('admin.tab_finance')) ?></h2></div>
+            <div class="finance-stack">
+                <div class="finance-row">
+                    <div>
+                        <strong><?= e(__('admin.quotation')) ?></strong>
+                        <?php if ($latestQuote): ?>
+                            <div><a href="<?= e(url('/admin/quotations/' . $latestQuote['id'])) ?>"><?= e($latestQuote['number']) ?></a> · <?= e($latestQuote['status']) ?></div>
+                        <?php else: ?>
+                            <div><?= e(__('admin.none_yet')) ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <strong><?= $latestQuote ? e(money($latestQuote['total'], $latestQuote['currency'])) : '—' ?></strong>
+                </div>
+                <div class="finance-row">
+                    <div>
+                        <strong><?= e(__('admin.invoices')) ?></strong>
+                        <?php if ($latestInvoice): ?>
+                            <div><a href="<?= e(url('/admin/invoices/' . $latestInvoice['id'])) ?>"><?= e($latestInvoice['number']) ?></a> · <?= e($latestInvoice['status']) ?></div>
+                        <?php else: ?>
+                            <div><?= e(__('admin.none_yet')) ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <strong><?= $latestInvoice ? e(money($latestInvoice['total'], $latestInvoice['currency'])) : '—' ?></strong>
+                </div>
+                <div class="finance-row">
+                    <div>
+                        <strong><?= e(__('admin.outstanding')) ?></strong>
+                        <div><?= e(__('admin.balance_due')) ?></div>
+                    </div>
+                    <strong><?= e(money($outstanding, $case['currency'] ?? 'LKR')) ?></strong>
+                </div>
+            </div>
+            <?php if ($latestInvoice && !in_array($latestInvoice['status'], ['cancelled', 'paid'], true)): ?>
+                <form class="stack" style="margin-top:1rem" method="post" action="<?= e(url('/admin/invoices/' . $latestInvoice['id'] . '/payments')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
+                    <h3><?= e(__('admin.record_payment')) ?></h3>
+                    <div class="form-grid">
+                        <label><?= e(__('fields.amount')) ?><input name="amount" required value="<?= e((string) $latestInvoice['amount_due']) ?>"></label>
+                        <label><?= e(__('fields.method')) ?><select name="method"><option value="bank_transfer">Bank transfer</option><option value="cash">Cash</option><option value="card">Card</option><option value="online">Online</option><option value="other">Other</option></select></label>
+                        <label><?= e(__('fields.date')) ?><input type="date" name="paid_at" value="<?= e(date('Y-m-d')) ?>" required></label>
+                        <label><?= e(__('fields.reference')) ?><input name="reference"></label>
+                    </div>
+                    <label><?= e(__('fields.notes')) ?><textarea name="notes"></textarea></label>
+                    <button class="btn btn-primary" type="submit"><?= e(__('admin.record_payment')) ?></button>
+                </form>
+            <?php endif; ?>
+            <?php if ($payments !== []): ?>
+                <h3 style="margin-top:1rem"><?= e(__('admin.payments')) ?></h3>
+                <ul>
+                    <?php foreach ($payments as $payment): ?>
+                        <li><?= e($payment['number']) ?> · <?= e($payment['method']) ?> · <?= e(money($payment['amount'], $payment['currency'] ?? $case['currency'])) ?> · <?= e(format_datetime($payment['paid_at'] ?? $payment['created_at'])) ?>
+                            <a href="<?= e(url('/admin/payments/' . $payment['id'] . '/receipt')) ?>"><?= e(__('actions.download')) ?></a>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </section>
+    </section>
+
+    <section class="case-panel" data-panel="activity" hidden>
+        <section class="card-block">
+            <div class="card-head"><h2><?= e(__('admin.tab_activity')) ?></h2></div>
+            <?php if (($activity ?? []) === []): ?>
+                <p class="empty"><?= e(__('admin.no_activity')) ?></p>
+            <?php else: ?>
+                <div class="activity-list">
+                    <?php foreach ($activity as $item): ?>
+                        <article class="activity-item">
+                            <time><?= e(format_datetime($item['at'])) ?></time>
+                            <div>
+                                <strong><?= e($item['title']) ?></strong>
+                                <?php if (!empty($item['meta'])): ?><p><?= e($item['meta']) ?></p><?php endif; ?>
+                                <?php if (!empty($item['by'])): ?><span><?= e(__('admin.by')) ?> <?= e($item['by']) ?></span><?php endif; ?>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </section>
+    </section>
+</article>
+<script>
+document.querySelectorAll('[data-jump-tab]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+        const tab = link.getAttribute('data-jump-tab');
+        const button = document.querySelector('[data-case-tabs] [data-tab="' + tab + '"]');
+        if (button) {
+            event.preventDefault();
+            button.click();
+            button.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    });
+});
+</script>

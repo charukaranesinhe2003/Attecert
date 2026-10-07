@@ -33,9 +33,10 @@ final class QuotationController extends Controller
         return $this->view('customer/quotations', [
             'title' => __('portal.quotations'),
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'quotations',
             'quotations' => $rows,
-        ], 'layouts/customer');
+        ]);
     }
 
     public function show(Request $request, string $id): Response
@@ -46,9 +47,10 @@ final class QuotationController extends Controller
         return $this->view('customer/quotation', [
             'title' => $bundle['quotation']['number'],
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'quotations',
             'bundle' => $this->quotations->bundle((int) $id),
-        ], 'layouts/customer');
+        ]);
     }
 
     public function accept(Request $request, string $id): Response

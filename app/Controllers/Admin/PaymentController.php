@@ -46,9 +46,10 @@ final class PaymentController extends Controller
         ]);
         try {
             $paymentId = $this->payments->record((int) $id, $data, (int) $this->auth->id());
-            flash('success', __('admin.payment_saved'));
+            $invoice = $this->db->fetch('SELECT case_id, number FROM invoices WHERE id = ?', [(int) $id]);
+            flash('success', __('admin.payment_saved') . ' ' . __('admin.receipt_ready'));
 
-            return $this->redirect('/admin/payments/' . $paymentId . '/receipt');
+            return $this->redirect('/admin/cases/' . (int) ($invoice['case_id'] ?? 0) . '#finance');
         } catch (\Throwable $exception) {
             flash('error', $exception->getMessage());
 

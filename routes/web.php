@@ -19,6 +19,7 @@ use App\Controllers\Admin\ProcessController;
 use App\Controllers\Admin\QuotationController as AdminQuotationController;
 use App\Controllers\Admin\QuoteRequestController as AdminQuoteRequestController;
 use App\Controllers\Admin\ReportController;
+use App\Controllers\Admin\SearchController;
 use App\Controllers\Admin\ServiceController as AdminServiceController;
 use App\Controllers\Admin\SettingsController;
 use App\Controllers\Admin\TranslationController;
@@ -76,6 +77,10 @@ return function (Router $router): void {
     $router->post('/logout', [AuthController::class, 'logout'], $auth);
 
     $customer = [AuthMiddleware::class, CustomerMiddleware::class];
+    $router->get('/account', [DashboardController::class, 'index'], $customer);
+    $router->get('/account/notifications', [NotificationController::class, 'feed'], $customer);
+    $router->get('/support', [ProfileController::class, 'support'], $customer);
+    $router->post('/support', [ProfileController::class, 'sendSupport'], $customer);
     $router->get('/portal', [DashboardController::class, 'index'], $customer);
     $router->get('/portal/applications', [ApplicationController::class, 'index'], $customer);
     $router->get('/portal/applications/{id}', [ApplicationController::class, 'show'], $customer);
@@ -102,6 +107,8 @@ return function (Router $router): void {
 
     $staff = [AuthMiddleware::class, StaffMiddleware::class];
     $router->get('/admin', [AdminDashboardController::class, 'index'], $staff);
+    $router->get('/admin/search', [SearchController::class, 'index'], $staff);
+    $router->get('/admin/processing', [ProcessController::class, 'index'], [...$staff, 'can:cases.edit']);
     $router->get('/admin/customers', [AdminCustomerController::class, 'index'], [...$staff, 'can:customers.view']);
     $router->get('/admin/customers/{id}', [AdminCustomerController::class, 'show'], [...$staff, 'can:customers.view']);
     $router->post('/admin/customers/{id}', [AdminCustomerController::class, 'update'], [...$staff, 'can:customers.edit']);
@@ -130,6 +137,7 @@ return function (Router $router): void {
     $router->get('/admin/quotations/{id}', [AdminQuotationController::class, 'show'], [...$staff, 'can:quotations.create']);
     $router->get('/admin/quotations/{id}/pdf', [AdminQuotationController::class, 'pdf'], [...$staff, 'can:quotations.create']);
     $router->post('/admin/quotations/{id}/send', [AdminQuotationController::class, 'send'], [...$staff, 'can:quotations.send']);
+    $router->post('/admin/quotations/{id}/invoice', [AdminQuotationController::class, 'createInvoice'], [...$staff, 'can:invoices.create']);
     $router->get('/admin/invoices', [AdminInvoiceController::class, 'index'], [...$staff, 'can:invoices.create']);
     $router->get('/admin/invoices/{id}', [AdminInvoiceController::class, 'show'], [...$staff, 'can:invoices.create']);
     $router->get('/admin/invoices/{id}/pdf', [AdminInvoiceController::class, 'pdf'], [...$staff, 'can:invoices.create']);

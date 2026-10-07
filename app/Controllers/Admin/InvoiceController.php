@@ -70,6 +70,10 @@ final class InvoiceController extends Controller
     {
         $result = $this->invoices->send((int) $id, (int) $this->auth->id());
         flash($result['status'] === 'sent' ? 'success' : 'error', $result['status'] === 'sent' ? __('admin.email_sent') : (string) $result['error']);
+        $invoice = $this->db->fetch('SELECT case_id FROM invoices WHERE id = ?', [(int) $id]);
+        if (!empty($invoice['case_id'])) {
+            return $this->redirect('/admin/cases/' . (int) $invoice['case_id'] . '#finance');
+        }
 
         return $this->redirect('/admin/invoices/' . $id);
     }

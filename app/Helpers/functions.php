@@ -247,6 +247,62 @@ function checked($value): string
     return $value ? ' checked' : '';
 }
 
+function account_customer(): ?array
+{
+    static $resolved = false;
+    static $customer = null;
+    if ($resolved) {
+        return $customer;
+    }
+    $resolved = true;
+    if (empty($_SESSION['user_id'])) {
+        return $customer = null;
+    }
+    try {
+        return $customer = app(\App\Services\AuthService::class)->customer();
+    } catch (Throwable) {
+        return $customer = null;
+    }
+}
+
+function customer_code(array $customer): string
+{
+    return 'ATC-' . str_pad((string) $customer['id'], 6, '0', STR_PAD_LEFT);
+}
+
+function initials(string $name): string
+{
+    $parts = preg_split('/\s+/u', trim($name)) ?: [];
+    $letters = '';
+    foreach (array_slice($parts, 0, 2) as $part) {
+        $letters .= mb_strtoupper(mb_substr($part, 0, 1));
+    }
+
+    return $letters !== '' ? $letters : 'A';
+}
+
+function time_ago(?string $value): string
+{
+    if ($value === null || $value === '') {
+        return '';
+    }
+    $diff = time() - strtotime($value);
+    if ($diff < 60) {
+        return __('time.just_now');
+    }
+    if ($diff < 3600) {
+        return __('time.minutes', ['count' => (string) max(1, (int) floor($diff / 60))]);
+    }
+    if ($diff < 86400) {
+        return __('time.hours', ['count' => (string) max(1, (int) floor($diff / 3600))]);
+    }
+    if ($diff < 86400 * 14) {
+        return __('time.days', ['count' => (string) max(1, (int) floor($diff / 86400))]);
+    }
+
+    return format_date($value);
+}
+
 function client_ip(): string
 {
     return substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);

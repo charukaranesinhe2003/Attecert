@@ -28,6 +28,7 @@ final class DashboardController extends Controller
             'from' => $from,
             'to' => $to,
             'metrics' => $this->reports->dashboard($from, $to),
+            'hidePageHeader' => true,
         ], 'layouts/admin');
     }
 }

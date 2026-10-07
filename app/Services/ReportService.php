@@ -46,15 +46,43 @@ final class ReportService
             $params
         );
 
+        $awaitingQuote = (int) $this->db->fetchColumn(
+            'SELECT COUNT(*) FROM quotations WHERE status = \'draft\''
+        ) + (int) $this->db->fetchColumn(
+            'SELECT COUNT(*) FROM cases c
+             INNER JOIN workflow_statuses s ON s.id = c.status_id
+             WHERE c.deleted_at IS NULL AND s.code IN (\'new_request\', \'under_review\')
+               AND NOT EXISTS (SELECT 1 FROM quotations q WHERE q.case_id = c.id)'
+        );
+        $awaitingPayment = (int) $this->db->fetchColumn(
+            'SELECT COUNT(*) FROM invoices WHERE status IN (\'issued\', \'sent\', \'partially_paid\', \'overdue\')'
+        );
+        $readyDocs = (int) $this->db->fetchColumn(
+            'SELECT COUNT(*) FROM documents WHERE deleted_at IS NULL AND category = \'completed\''
+        );
+
         return [
+            'attention' => $this->attention(),
             'by_status' => $byStatus,
             'new_cases' => $newInRange,
             'completed' => $completed,
             'active' => (int) $this->db->fetchColumn('SELECT COUNT(*) FROM cases c INNER JOIN workflow_statuses s ON s.id = c.status_id WHERE c.deleted_at IS NULL AND s.is_terminal = 0'),
+            'awaiting_quote' => $awaitingQuote,
+            'awaiting_payment' => $awaitingPayment,
+            'ready_docs' => $readyDocs,
             'revenue' => $revenue,
             'outstanding' => $outstanding,
             'quote_requests' => $quotes,
             'recent_quotes' => $this->db->fetchAll('SELECT * FROM quote_requests ORDER BY created_at DESC LIMIT 6'),
+            'recent_documents' => $this->db->fetchAll(
+                'SELECT d.id, d.original_name, d.category, d.created_at, d.case_id, c.number AS case_number, cu.name AS customer_name
+                 FROM documents d
+                 LEFT JOIN cases c ON c.id = d.case_id
+                 LEFT JOIN customers cu ON cu.id = c.customer_id
+                 WHERE d.deleted_at IS NULL
+                 ORDER BY d.created_at DESC
+                 LIMIT 8'
+            ),
             'recent_cases' => $this->db->fetchAll(
                 'SELECT c.number, c.id, c.created_at, cu.name AS customer_name, st.name AS status_name
                  FROM cases c
@@ -63,6 +91,40 @@ final class ReportService
                  LEFT JOIN workflow_status_translations st ON st.status_id = s.id AND st.locale = \'en\'
                  WHERE c.deleted_at IS NULL
                  ORDER BY c.created_at DESC LIMIT 6'
+            ),
+        ];
+    }
+
+    public function attention(): array
+    {
+        return [
+            'draft_quotes' => $this->db->fetchAll(
+                'SELECT q.id, q.number, q.case_id, q.created_at, cu.name AS customer_name
+                 FROM quotations q INNER JOIN customers cu ON cu.id = q.customer_id
+                 WHERE q.status = \'draft\' ORDER BY q.created_at ASC LIMIT 6'
+            ),
+            'overdue' => $this->db->fetchAll(
+                'SELECT i.id, i.number, i.case_id, i.due_at, i.amount_due, cu.name AS customer_name
+                 FROM invoices i INNER JOIN customers cu ON cu.id = i.customer_id
+                 WHERE i.status IN (\'issued\', \'sent\', \'partially_paid\', \'overdue\') AND i.due_at IS NOT NULL AND i.due_at < CURDATE()
+                 ORDER BY i.due_at ASC LIMIT 6'
+            ),
+            'waiting_documents' => $this->db->fetchAll(
+                'SELECT c.id, c.number, c.created_at, cu.name AS customer_name
+                 FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id
+                 INNER JOIN workflow_statuses s ON s.id = c.status_id
+                 WHERE c.deleted_at IS NULL AND s.code = \'awaiting_documents\' ORDER BY c.created_at ASC LIMIT 6'
+            ),
+            'mofa' => $this->db->fetchAll(
+                'SELECT c.id, c.number, m.updated_at, cu.name AS customer_name
+                 FROM mofa_processes m INNER JOIN cases c ON c.id = m.case_id INNER JOIN customers cu ON cu.id = c.customer_id
+                 WHERE m.status IN (\'submitted\', \'processing\') ORDER BY m.expected_at ASC LIMIT 6'
+            ),
+            'ready' => $this->db->fetchAll(
+                'SELECT d.id, d.original_name, d.case_id, c.number AS case_number, cu.name AS customer_name
+                 FROM documents d INNER JOIN cases c ON c.id = d.case_id INNER JOIN customers cu ON cu.id = c.customer_id
+                 WHERE d.deleted_at IS NULL AND d.category = \'completed\' AND d.customer_visible = 0
+                 ORDER BY d.created_at DESC LIMIT 6'
             ),
         ];
     }

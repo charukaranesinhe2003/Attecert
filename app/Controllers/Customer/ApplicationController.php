@@ -30,9 +30,10 @@ final class ApplicationController extends Controller
         return $this->view('customer/applications', [
             'title' => __('portal.applications'),
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'applications',
             'cases' => $this->cases->forCustomerList((int) $customer['id']),
-        ], 'layouts/customer');
+        ]);
     }
 
     public function show(Request $request, string $id): Response
@@ -50,10 +51,11 @@ final class ApplicationController extends Controller
         return $this->view('customer/application', [
             'title' => $case['number'],
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'applications',
             'case' => $case,
             'documents' => $documents,
-        ], 'layouts/customer');
+        ]);
     }
 
     public function tracking(): Response
@@ -61,8 +63,9 @@ final class ApplicationController extends Controller
         return $this->view('customer/tracking', [
             'title' => __('portal.tracking'),
             'robots' => 'noindex',
+            'accountFrame' => true,
             'active' => 'tracking',
             'cases' => $this->cases->forCustomerList((int) $this->auth->customer()['id']),
-        ], 'layouts/customer');
+        ]);
     }
 }

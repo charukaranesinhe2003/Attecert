@@ -9,6 +9,7 @@ use App\Core\Database;
 use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
+use App\Helpers\NextStep;
 use App\Services\AuthService;
 use App\Services\CaseService;
 use App\Services\CatalogService;
@@ -37,6 +38,9 @@ final class CaseController extends Controller
             'title' => __('admin.cases'),
             'robots' => 'noindex',
             'active' => 'cases',
+            'pageHeading' => __('admin.cases'),
+            'pageDescription' => __('admin.cases_hint'),
+            'pageAction' => '<a class="btn btn-primary" href="' . e(url('/admin/cases/create')) . '">+ ' . e(__('admin.new_case')) . '</a>',
             'filters' => [
                 'q' => trim((string) $request->query('q', '')),
                 'status' => (string) $request->query('status', ''),
@@ -93,23 +97,87 @@ final class CaseController extends Controller
             throw new HttpException(404);
         }
 
+        $quotations = $this->db->fetchAll('SELECT * FROM quotations WHERE case_id = ? ORDER BY id DESC', [(int) $id]);
+        $invoices = $this->db->fetchAll('SELECT * FROM invoices WHERE case_id = ? ORDER BY id DESC', [(int) $id]);
+        $payments = $this->db->fetchAll('SELECT * FROM payments WHERE case_id = ? ORDER BY id DESC', [(int) $id]);
+        $documents = $this->documents->forCase((int) $case['id']);
+        $mofa = $this->db->fetch('SELECT * FROM mofa_processes WHERE case_id = ? ORDER BY id DESC LIMIT 1', [(int) $id]);
+        $embassy = $this->db->fetch('SELECT * FROM embassy_processes WHERE case_id = ? ORDER BY id DESC LIMIT 1', [(int) $id]);
+
         return $this->view('admin/cases/show', [
             'title' => $case['number'],
             'robots' => 'noindex',
             'active' => 'cases',
+            'hidePageHeader' => true,
             'case' => $case,
             'statuses' => $this->workflow->statuses(),
             'countries' => $this->catalog->countries(false),
             'services' => $this->catalog->services(false),
             'documentTypes' => $this->catalog->documentTypes(),
-            'documents' => $this->documents->forCase((int) $case['id']),
-            'quotations' => $this->db->fetchAll('SELECT * FROM quotations WHERE case_id = ? ORDER BY id DESC', [(int) $id]),
-            'invoices' => $this->db->fetchAll('SELECT * FROM invoices WHERE case_id = ? ORDER BY id DESC', [(int) $id]),
-            'payments' => $this->db->fetchAll('SELECT * FROM payments WHERE case_id = ? ORDER BY id DESC', [(int) $id]),
-            'mofa' => $this->db->fetch('SELECT * FROM mofa_processes WHERE case_id = ? ORDER BY id DESC LIMIT 1', [(int) $id]),
-            'embassy' => $this->db->fetch('SELECT * FROM embassy_processes WHERE case_id = ? ORDER BY id DESC LIMIT 1', [(int) $id]),
+            'documents' => $documents,
+            'quotations' => $quotations,
+            'invoices' => $invoices,
+            'payments' => $payments,
+            'mofa' => $mofa,
+            'embassy' => $embassy,
+            'nextStep' => NextStep::forCase($case, $quotations, $invoices, $mofa, $embassy),
+            'activity' => $this->activityTimeline((int) $id, $case, $documents, $quotations, $invoices, $payments),
             'staff' => $this->db->fetchAll('SELECT u.id, u.name FROM users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id WHERE r.code <> \'customer\' AND u.deleted_at IS NULL GROUP BY u.id, u.name'),
         ], 'layouts/admin');
+    }
+
+    private function activityTimeline(int $caseId, array $case, array $documents, array $quotations, array $invoices, array $payments): array
+    {
+        $items = [];
+        $items[] = [
+            'at' => $case['created_at'],
+            'title' => 'Case created',
+            'meta' => $case['number'] . ' · ' . $case['document_title'],
+            'by' => null,
+        ];
+        foreach ($case['history'] as $item) {
+            $items[] = [
+                'at' => $item['created_at'],
+                'title' => 'Status: ' . ($item['name'] ?: $item['code']),
+                'meta' => $item['notes'] ?: null,
+                'by' => $item['staff_name'] ?? null,
+            ];
+        }
+        foreach ($documents as $doc) {
+            $items[] = [
+                'at' => $doc['created_at'],
+                'title' => 'Document uploaded',
+                'meta' => $doc['original_name'] . ' · ' . $doc['category'],
+                'by' => null,
+            ];
+        }
+        foreach ($quotations as $quote) {
+            $items[] = [
+                'at' => $quote['created_at'],
+                'title' => 'Quotation ' . $quote['number'],
+                'meta' => $quote['status'] . ' · ' . money($quote['total'], $quote['currency']),
+                'by' => null,
+            ];
+        }
+        foreach ($invoices as $invoice) {
+            $items[] = [
+                'at' => $invoice['created_at'],
+                'title' => 'Invoice ' . $invoice['number'],
+                'meta' => $invoice['status'] . ' · ' . money($invoice['total'], $invoice['currency']),
+                'by' => null,
+            ];
+        }
+        foreach ($payments as $payment) {
+            $items[] = [
+                'at' => $payment['paid_at'] ?? $payment['created_at'],
+                'title' => 'Payment recorded',
+                'meta' => money($payment['amount'], $payment['currency'] ?? $case['currency']) . ' · ' . $payment['method'],
+                'by' => null,
+            ];
+        }
+        usort($items, static fn (array $a, array $b): int => strcmp((string) $b['at'], (string) $a['at']));
+
+        return $items;
     }
 
     public function update(Request $request, string $id): Response
@@ -127,7 +195,7 @@ final class CaseController extends Controller
         $this->cases->updateDetails((int) $id, $data, (int) $this->auth->id());
         flash('success', __('admin.saved'));
 
-        return $this->redirect('/admin/cases/' . $id);
+        return $this->redirect('/admin/cases/' . $id . '#overview');
     }
 
     public function status(Request $request, string $id): Response
@@ -144,7 +212,7 @@ final class CaseController extends Controller
             flash('error', $exception->getMessage());
         }
 
-        return $this->redirect('/admin/cases/' . $id);
+        return $this->redirect('/admin/cases/' . $id . '#overview');
     }
 
     public function services(Request $request, string $id): Response
@@ -162,7 +230,7 @@ final class CaseController extends Controller
         $this->cases->syncServices((int) $id, $lines);
         flash('success', __('admin.saved'));
 
-        return $this->redirect('/admin/cases/' . $id);
+        return $this->redirect('/admin/cases/' . $id . '#quote');
     }
 
     public function quotation(Request $request, string $id): Response
@@ -210,7 +278,7 @@ final class CaseController extends Controller
                 flash('success', __('admin.quotation_saved'));
             }
 
-            return $this->redirect('/admin/quotations/' . $quotationId);
+            return $this->redirect('/admin/cases/' . $id . '#quote');
         } catch (\Throwable $exception) {
             flash('error', $exception->getMessage());
 
@@ -242,6 +310,6 @@ final class CaseController extends Controller
             flash('error', $exception->getMessage());
         }
 
-        return $this->redirect('/admin/cases/' . $id);
+        return $this->redirect('/admin/cases/' . $id . '#documents');
     }
 }

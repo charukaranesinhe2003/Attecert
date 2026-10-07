@@ -105,10 +105,11 @@ final class WorkflowService
 
     public function history(int $caseId, bool $publicOnly = false): array
     {
-        $sql = 'SELECT h.*, s.code, s.badge_tone, t.name
+        $sql = 'SELECT h.*, s.code, s.badge_tone, t.name, u.name AS staff_name
                 FROM case_status_history h
                 INNER JOIN workflow_statuses s ON s.id = h.status_id
                 LEFT JOIN workflow_status_translations t ON t.status_id = s.id AND t.locale = ?
+                LEFT JOIN users u ON u.id = h.staff_id
                 WHERE h.case_id = ?';
         if ($publicOnly) {
             $sql .= ' AND h.customer_visible = 1';

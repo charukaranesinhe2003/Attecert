@@ -1,4 +1,6 @@
+<p class="page-back"><a class="btn btn-ghost" href="<?= e(url('/portal/applications')) ?>"><?= icon('chevron', 'icon icon-sm') ?> <?= e(__('portal.back_applications')) ?></a></p>
 <p><?= e($case['document_title']) ?> · <?= e($case['country_name'] ?? '') ?></p>
+<p><strong><?= e($case['number']) ?></strong> <button class="btn btn-ghost" type="button" data-copy-code="<?= e($case['number']) ?>" data-copied-label="<?= e(__('quote.copied')) ?>"><?= e(__('quote.copy_code')) ?></button></p>
 <p><?= status_badge($case['status_name'] ?: $case['status_code'], $case['badge_tone']) ?></p>
 <?php if ($case['estimated_next']): ?><p><strong><?= e(__('track.next')) ?>:</strong> <?= e($case['estimated_next']) ?></p><?php endif; ?>
 <h2><?= e(__('portal.timeline')) ?></h2>
