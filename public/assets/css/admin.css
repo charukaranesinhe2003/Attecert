@@ -1,0 +1,5 @@
+.admin-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 1rem; }
+.card-block { background: white; border-radius: 16px; padding: 1rem; box-shadow: var(--shadow-sm); margin-bottom: 1rem; }
+.card-block h2 { font-family: var(--font-sans); font-size: 1.05rem; }
+.actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+@media (max-width: 1000px) { .admin-grid { grid-template-columns: 1fr; } }

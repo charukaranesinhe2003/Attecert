@@ -1,0 +1,1 @@
+<?php if ($cases === []): ?><p class="empty"><?= e(__('empty.cases')) ?></p><?php endif; ?><?php foreach ($cases as $case): ?><article class="card-block"><a href="<?= e(url('/portal/applications/' . $case['id'])) ?>"><strong><?= e($case['number']) ?></strong></a><p><?= e($case['status_name']) ?></p></article><?php endforeach; ?>

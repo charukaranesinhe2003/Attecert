@@ -1,0 +1,2 @@
+<div class="table-wrap"><table><tbody><?php foreach ($page['rows'] as $row): ?><tr><td><?= e($row['original_name']) ?></td><td><?= e((string) $row['case_number']) ?></td><td><?= e($row['category']) ?></td><td><a href="<?= e(url('/admin/documents/' . $row['id'] . '/download')) ?>"><?= e(__('actions.download')) ?></a></td></tr><?php endforeach; ?></tbody></table></div>
+<?= paginator($page, '/admin/documents') ?>

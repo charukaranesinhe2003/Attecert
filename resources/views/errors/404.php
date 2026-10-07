@@ -1,0 +1,1 @@
+<section class="page-hero"><div class="container"><h1>404</h1><p class="lead"><?= e($message ?: __('errors.404')) ?></p><a class="btn btn-primary" href="<?= e(url('/')) ?>"><?= e(__('nav.home')) ?></a></div></section>

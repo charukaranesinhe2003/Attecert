@@ -1,0 +1,1 @@
+<section class="page-hero"><div class="container"><h1>419</h1><p class="lead"><?= e($message ?: __('errors.419')) ?></p><a class="btn btn-primary" href="<?= e(url('/login')) ?>"><?= e(__('auth.login')) ?></a></div></section>

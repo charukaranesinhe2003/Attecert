@@ -1,0 +1,3 @@
+<form class="filters" method="get"><select name="status"><option value="">All</option><?php foreach (['new','contacted','converted','closed','spam'] as $state): ?><option value="<?= e($state) ?>" <?= selected($status, $state) ?>><?= e($state) ?></option><?php endforeach; ?></select><button class="btn btn-primary"><?= e(__('actions.filter')) ?></button></form>
+<div class="table-wrap"><table><tbody><?php foreach ($page['rows'] as $row): ?><tr><td><a href="<?= e(url('/admin/quote-requests/' . $row['id'])) ?>"><?= e($row['name']) ?></a></td><td><?= e($row['email']) ?></td><td><?= e($row['status']) ?></td></tr><?php endforeach; ?></tbody></table></div>
+<?= paginator($page, '/admin/quote-requests') ?>

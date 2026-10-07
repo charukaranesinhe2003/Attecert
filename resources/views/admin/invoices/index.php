@@ -1,0 +1,3 @@
+<form class="filters" method="get"><input name="q" value="<?= e($q) ?>"><input name="status" value="<?= e($status) ?>" placeholder="status"><button class="btn btn-primary"><?= e(__('actions.filter')) ?></button></form>
+<div class="table-wrap"><table><tbody><?php foreach ($page['rows'] as $row): ?><tr><td><a href="<?= e(url('/admin/invoices/' . $row['id'])) ?>"><?= e($row['number']) ?></a></td><td><?= e($row['customer_name']) ?></td><td><?= e($row['status']) ?></td><td><?= e(money($row['amount_due'], $row['currency'])) ?></td></tr><?php endforeach; ?></tbody></table></div>
+<?= paginator($page, '/admin/invoices') ?>

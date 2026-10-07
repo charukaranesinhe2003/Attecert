@@ -1,0 +1,41 @@
+@media (max-width: 1100px) {
+    .site-nav > a { font-size: 0.86rem; }
+    .country-grid { grid-template-columns: repeat(3, 1fr); }
+    .footer-grid { grid-template-columns: 1.3fr 1fr 1fr; }
+    .hero h1 { max-width: 14ch; }
+}
+@media (max-width: 860px) {
+    .topbar { display: none; }
+    .menu-toggle { display: grid; place-items: center; margin-left: auto; }
+    .site-nav {
+        display: none; position: absolute; left: 0; right: 0; top: 100%;
+        background: white; flex-direction: column; align-items: stretch;
+        padding: 0.6rem 1.1rem 1rem; border-bottom: 1px solid var(--border-light); box-shadow: var(--shadow-md);
+    }
+    .site-nav.is-open { display: flex; }
+    .nav-tools { flex-direction: column; align-items: stretch; margin: 0.4rem 0 0; }
+    .nav-tools .btn { width: 100%; }
+    .hero { padding: 1.5rem 0 1.2rem; }
+    .hero-grid, .care-grid, .about-grid, .faq-grid, .quote-grid, .split, .form-grid, .card-grid, .article-grid, .steps, .stat-row {
+        grid-template-columns: 1fr;
+    }
+    .hero h1 { font-size: 2.15rem; max-width: none; }
+    .hero-actions .btn { width: 100%; }
+    .hero-visual img { height: 230px; border-radius: 16px; }
+    .track-card { display: none; }
+    .mobile-track { display: block; }
+    .paper-card { display: none; }
+    .section-head { flex-direction: column; align-items: start; }
+    .steps::before { display: none; }
+    .steps li { text-align: left; display: grid; grid-template-columns: auto 1fr; grid-template-areas: "n title" "n text" "icon text"; }
+    .track-band-inner, .final-cta-inner, .notice-inner, .footer-bottom { flex-direction: column; align-items: stretch; }
+    .track-band form { grid-template-columns: 1fr; }
+    .country-grid { grid-template-columns: 1fr 1fr; }
+    .span-2 { grid-column: auto; }
+    .footer-grid { grid-template-columns: 1fr; }
+    .container { width: min(var(--container), calc(100% - 1.5rem)); }
+}
+@media (max-width: 380px) {
+    .country-grid { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 1.85rem; }
+}

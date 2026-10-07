@@ -1,0 +1,1 @@
+<form class="card-block stack" method="post" action="<?= e(url('/portal/support')) ?>"><?= csrf_field() ?><label><?= e(__('fields.subject')) ?><input name="subject"></label><label><?= e(__('fields.message')) ?><textarea name="message" rows="6" required></textarea></label><button class="btn btn-primary" type="submit"><?= e(__('contact.send')) ?></button></form>

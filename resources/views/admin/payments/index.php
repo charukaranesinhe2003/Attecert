@@ -1,0 +1,2 @@
+<div class="table-wrap"><table><tbody><?php foreach ($page['rows'] as $row): ?><tr><td><?= e($row['number']) ?></td><td><?= e($row['customer_name']) ?></td><td><?= e(money($row['amount'], $row['currency'])) ?></td><td><?= e($row['method']) ?></td><td><a href="<?= e(url('/admin/payments/' . $row['id'] . '/receipt')) ?>"><?= e(__('actions.download')) ?></a></td></tr><?php endforeach; ?></tbody></table></div>
+<?= paginator($page, '/admin/payments') ?>
