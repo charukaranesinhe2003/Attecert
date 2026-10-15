@@ -22,7 +22,8 @@ final class PaymentService
 
     public function record(int $invoiceId, array $data, int $staffId): int
     {
-        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ?', [$invoiceId]);
+        return $this->db->transaction(function () use ($invoiceId, $data, $staffId): int {
+        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
         if ($invoice === null || $invoice['status'] === 'cancelled') {
             throw new \RuntimeException('Invoice cannot accept payments.');
         }
@@ -38,7 +39,6 @@ final class PaymentService
             throw new \RuntimeException('Refund exceeds the amount paid.');
         }
 
-        return $this->db->transaction(function () use ($invoice, $data, $amount, $isRefund, $staffId): int {
             $paymentId = $this->db->insert(
                 'INSERT INTO payments (number, invoice_id, case_id, customer_id, amount, currency, method, status, paid_at, reference, receipt_reference, notes, recorded_by)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',

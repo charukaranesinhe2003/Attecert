@@ -22,8 +22,8 @@ final class Request
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
         $uri = $_SERVER['REQUEST_URI'] ?? '/';
         $path = rawurldecode(parse_url($uri, PHP_URL_PATH) ?: '/');
-        $base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
-        if ($base !== '' && $base !== '/' && str_starts_with($path, $base)) {
+        $base = function_exists('web_base') ? web_base() : '';
+        if ($base !== '' && ($path === $base || str_starts_with($path, $base . '/'))) {
             $path = substr($path, strlen($base)) ?: '/';
         }
         if ($path === '') {

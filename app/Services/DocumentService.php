@@ -47,7 +47,7 @@ final class DocumentService
         }
         $stored = bin2hex(random_bytes(16)) . '.' . $extension;
         $folder = $caseId ? 'case-' . $caseId : 'request-' . (int) $quoteRequestId;
-        $directory = base_path('storage/documents/' . $folder);
+        $directory = storage_path('documents/' . $folder);
         if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
             throw new \RuntimeException('Unable to create document storage.');
         }
@@ -69,26 +69,7 @@ final class DocumentService
             'name' => $original,
         ]);
         if ($visible && $caseId !== null) {
-            $case = $this->db->fetch(
-                'SELECT c.number, cu.user_id, cu.email, cu.name FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id WHERE c.id = ?',
-                [$caseId]
-            );
-            if ($case !== null) {
-                $this->notifications->notify(
-                    $case['user_id'] !== null ? (int) $case['user_id'] : null,
-                    __('notifications.document_title'),
-                    __('notifications.document_body', ['number' => $case['number']]),
-                    '/portal/documents'
-                );
-                $this->mail->send(
-                    $case['email'],
-                    __('mail.document_subject', ['number' => $case['number']]),
-                    'document-ready',
-                    ['name' => $case['name'], 'number' => $case['number'], 'link' => absolute_url('/portal/documents')],
-                    'document',
-                    $id
-                );
-            }
+            $this->notifyAvailable($caseId, $id);
         }
 
         return $id;
@@ -112,7 +93,7 @@ final class DocumentService
             'SELECT d.*, c.number AS case_number
              FROM documents d
              INNER JOIN cases c ON c.id = d.case_id
-             WHERE c.customer_id = ? AND d.deleted_at IS NULL AND d.customer_visible = 1
+             WHERE c.customer_id = ? AND c.deleted_at IS NULL AND d.deleted_at IS NULL AND d.customer_visible = 1
              ORDER BY d.created_at DESC',
             [$customerId]
         );
@@ -123,7 +104,7 @@ final class DocumentService
         $sql = 'SELECT d.*, c.customer_id, c.number
                 FROM documents d
                 LEFT JOIN cases c ON c.id = d.case_id
-                WHERE d.id = ? AND d.deleted_at IS NULL';
+                WHERE d.id = ? AND d.deleted_at IS NULL AND (d.case_id IS NULL OR c.deleted_at IS NULL)';
         $document = $this->db->fetch($sql, [$documentId]);
         if ($document === null) {
             throw new HttpException(404, 'Document not found.');
@@ -133,10 +114,10 @@ final class DocumentService
                 throw new HttpException(403, 'You cannot download this document.');
             }
         }
-        $path = base_path('storage/documents/' . $document['stored_name']);
+        $path = storage_path('documents/' . $document['stored_name']);
         $real = realpath($path);
-        $root = realpath(base_path('storage/documents'));
-        if ($real === false || $root === false || !str_starts_with($real, $root) || !is_file($real)) {
+        $root = realpath(storage_path('documents'));
+        if ($real === false || $root === false || !str_starts_with($real, $root . DIRECTORY_SEPARATOR) || !is_file($real)) {
             throw new HttpException(404, 'File is no longer available.');
         }
         $this->db->insert(
@@ -150,7 +131,59 @@ final class DocumentService
 
     public function archive(int $documentId, int $userId): void
     {
-        $this->db->run('UPDATE documents SET deleted_at = NOW() WHERE id = ?', [$documentId]);
-        $this->audit->log($userId, 'document_archived', 'document', $documentId);
+        $this->db->transaction(function () use ($documentId, $userId): void {
+            $document = $this->db->fetch('SELECT id, case_id, customer_visible FROM documents WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [$documentId]);
+            if ($document === null) {
+                throw new HttpException(404, 'Document not found.');
+            }
+            $this->db->run('UPDATE documents SET deleted_at = NOW() WHERE id = ?', [$documentId]);
+            $this->audit->log($userId, 'document_archived', 'document', $documentId, ['case_id' => $document['case_id'], 'customer_visible' => (int) $document['customer_visible']]);
+        });
+    }
+
+    public function setVisibility(int $documentId, bool $visible, int $userId): bool
+    {
+        return $this->db->transaction(function () use ($documentId, $visible, $userId): bool {
+            $document = $this->db->fetch('SELECT d.*, c.deleted_at AS case_deleted_at, cu.deleted_at AS customer_deleted_at FROM documents d INNER JOIN cases c ON c.id = d.case_id INNER JOIN customers cu ON cu.id = c.customer_id WHERE d.id = ? AND d.deleted_at IS NULL FOR UPDATE', [$documentId]);
+            if ($document === null || $document['case_deleted_at'] !== null || $document['customer_deleted_at'] !== null) {
+                throw new HttpException(404, 'Document not found.');
+            }
+            if ($document['category'] !== 'completed') {
+                throw new HttpException(422, 'Only completed documents can be released here.');
+            }
+            if ((int) $document['customer_visible'] === (int) $visible) {
+                return false;
+            }
+            if ($visible) {
+                $root = realpath(storage_path('documents'));
+                $file = realpath(storage_path('documents/' . $document['stored_name']));
+                if ($root === false || $file === false || !str_starts_with($file, $root . DIRECTORY_SEPARATOR) || !is_file($file)) {
+                    throw new HttpException(422, 'The stored file is unavailable. Upload a replacement before releasing it.');
+                }
+            }
+            $this->db->run('UPDATE documents SET customer_visible = ? WHERE id = ?', [$visible ? 1 : 0, $documentId]);
+            $this->audit->log($userId, $visible ? 'document_released' : 'document_made_private', 'document', $documentId, ['case_id' => (int) $document['case_id'], 'previous_visible' => (int) $document['customer_visible'], 'customer_visible' => $visible ? 1 : 0]);
+            if ($visible) {
+                $this->notifyAvailable((int) $document['case_id'], $documentId);
+            }
+
+            return true;
+        });
+    }
+
+    private function notifyAvailable(int $caseId, int $documentId): void
+    {
+        $case = $this->db->fetch('SELECT c.number, cu.user_id, cu.email, cu.name FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id WHERE c.id = ? AND c.deleted_at IS NULL AND cu.deleted_at IS NULL', [$caseId]);
+        if ($case === null) {
+            return;
+        }
+        $this->notifications->notify(
+            $case['user_id'] !== null ? (int) $case['user_id'] : null,
+            __('notifications.document_title'),
+            __('notifications.document_body', ['number' => $case['number']]),
+            '/portal/documents'
+        );
+        $this->mail->send($case['email'], __('mail.document_subject', ['number' => $case['number']]), 'document-ready',
+            ['name' => $case['name'], 'number' => $case['number'], 'link' => absolute_url('/portal/documents')], 'document', $documentId);
     }
 }

@@ -60,6 +60,12 @@ final class Validator
         if ($rule === 'numeric' && !is_numeric((string) $value)) {
             return __('validation.numeric', ['field' => $label]);
         }
+        if ($rule === 'date') {
+            $date = is_string($value) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $value) : false;
+            if ($date === false || $date->format('Y-m-d') !== $value) {
+                return $label . ' must be a valid date in YYYY-MM-DD format.';
+            }
+        }
         if (str_starts_with($rule, 'min:')) {
             $min = (float) substr($rule, 4);
             if ($numeric) {

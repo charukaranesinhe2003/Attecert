@@ -21,6 +21,12 @@ final class InvoiceService
 
     public function createFromQuotation(int $quotationId, int $userId): int
     {
+        return $this->db->transaction(function () use ($quotationId, $userId): int {
+        // Lock the parent even when no invoice exists, so concurrent conversions serialize.
+        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
+        if ($quotation === null) {
+            throw new \RuntimeException('Quotation not found.');
+        }
         $existing = $this->db->fetch(
             'SELECT id FROM invoices WHERE quotation_id = ? AND status <> ?',
             [$quotationId, 'cancelled']
@@ -28,7 +34,6 @@ final class InvoiceService
         if ($existing) {
             return (int) $existing['id'];
         }
-        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ?', [$quotationId]);
         $items = $this->db->fetchAll('SELECT * FROM quotation_items WHERE quotation_id = ?', [$quotationId]);
         $days = (int) setting('invoice_due_days', 7);
         $invoiceId = $this->db->insert(
@@ -71,6 +76,7 @@ final class InvoiceService
         $this->audit->log($userId, 'invoice_created', 'invoice', $invoiceId, ['quotation_id' => $quotationId, 'total' => $quotation['total']]);
 
         return $invoiceId;
+        });
     }
 
     public function send(int $invoiceId, int $staffId): array
@@ -103,7 +109,8 @@ final class InvoiceService
 
     public function cancel(int $invoiceId, int $staffId, string $reason): void
     {
-        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ?', [$invoiceId]);
+        $this->db->transaction(function () use ($invoiceId, $staffId, $reason): void {
+        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
         if ($invoice === null) {
             throw new \RuntimeException('Invoice not found.');
         }
@@ -118,6 +125,7 @@ final class InvoiceService
             ['cancelled', $reason, $invoiceId]
         );
         $this->audit->log($staffId, 'invoice_cancelled', 'invoice', $invoiceId, ['reason' => $reason]);
+        });
     }
 
     public function bundle(int $invoiceId): array

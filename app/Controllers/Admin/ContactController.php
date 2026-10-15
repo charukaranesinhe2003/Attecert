@@ -6,12 +6,15 @@ namespace App\Controllers\Admin;
 
 use App\Core\Controller;
 use App\Core\Database;
+use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\AuditService;
+use App\Services\AuthService;
 
 final class ContactController extends Controller
 {
-    public function __construct(\App\Core\Validator $validator, private Database $db)
+    public function __construct(\App\Core\Validator $validator, private Database $db, private AuthService $auth, private AuditService $audit)
     {
         parent::__construct($validator);
     }
@@ -42,7 +45,16 @@ final class ContactController extends Controller
     public function status(Request $request, string $id): Response
     {
         $data = $this->validate($request, ['status' => 'required|in:new,contacted,closed,spam']);
-        $this->db->run('UPDATE contact_messages SET status = ? WHERE id = ?', [$data['status'], (int) $id]);
+        $this->db->transaction(function () use ($data, $id): void {
+            $message = $this->db->fetch('SELECT id, status FROM contact_messages WHERE id = ? FOR UPDATE', [(int) $id]);
+            if ($message === null) {
+                throw new HttpException(404, 'Message not found.');
+            }
+            if ($message['status'] !== $data['status']) {
+                $this->db->run('UPDATE contact_messages SET status = ? WHERE id = ?', [$data['status'], (int) $id]);
+                $this->audit->log($this->auth->id(), 'contact_status_updated', 'contact_message', (int) $id, ['previous_status' => $message['status'], 'status' => $data['status']]);
+            }
+        });
         flash('success', __('admin.saved'));
 
         return $this->redirect('/admin/contacts');

@@ -1,19 +1,46 @@
 document.addEventListener('DOMContentLoaded', () => {
-    document.querySelector('[data-portal-nav]')?.addEventListener('click', () => {
-        document.getElementById('portal-nav')?.classList.toggle('is-open');
+    const navToggle = document.querySelector('[data-portal-nav]');
+    const nav = document.getElementById('portal-nav');
+    const backdrop = document.querySelector('[data-portal-backdrop]');
+    const closeNav = () => {
+        const wasOpen = nav?.classList.contains('is-open');
+        nav?.classList.remove('is-open');
+        navToggle?.setAttribute('aria-expanded', 'false');
+        if (backdrop) backdrop.hidden = true;
+        if (wasOpen) navToggle?.focus();
+    };
+    navToggle?.addEventListener('click', () => {
+        if (nav?.classList.contains('is-open')) return closeNav();
+        nav?.classList.add('is-open');
+        navToggle.setAttribute('aria-expanded', 'true');
+        if (backdrop) backdrop.hidden = false;
+        nav?.querySelector('[data-portal-close]')?.focus();
     });
-
-    document.querySelectorAll('[data-confirm]').forEach((form) => {
-        form.addEventListener('submit', (event) => {
-            const message = form.getAttribute('data-confirm');
-            if (message && !window.confirm(message)) {
+    document.querySelector('[data-portal-close]')?.addEventListener('click', closeNav);
+    backdrop?.addEventListener('click', closeNav);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeNav();
+        if (event.key === 'Tab' && nav?.classList.contains('is-open')) {
+            const focusable = [...nav.querySelectorAll('a[href], button:not([disabled])')];
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
                 event.preventDefault();
+                last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first?.focus();
             }
-        });
+        }
+    });
+    window.matchMedia('(min-width: 901px)').addEventListener('change', (event) => {
+        if (event.matches) closeNav();
     });
 
     document.querySelectorAll('form[data-busy]').forEach((form) => {
-        form.addEventListener('submit', () => {
+        form.addEventListener('submit', (event) => {
+            // public.js owns confirmations and runs first. A cancelled form stays usable.
+            if (event.defaultPrevented) return;
             const button = form.querySelector('[type="submit"]');
             if (button) {
                 button.classList.add('is-busy');
@@ -60,26 +87,48 @@ document.addEventListener('DOMContentLoaded', () => {
     const searchForm = document.querySelector('[data-admin-search]');
     const searchInput = document.querySelector('[data-admin-search-input]');
     const searchResults = document.querySelector('[data-admin-search-results]');
+    const searchStatus = document.querySelector('[data-admin-search-status]');
     let searchTimer = null;
     let activeIndex = -1;
+    let searchRequest = null;
+    let searchSequence = 0;
 
     const hideSearch = () => {
+        clearTimeout(searchTimer);
+        searchSequence += 1;
+        searchRequest?.abort();
         searchResults?.setAttribute('hidden', '');
+        searchInput?.setAttribute('aria-expanded', 'false');
+        searchInput?.removeAttribute('aria-activedescendant');
+        searchForm?.removeAttribute('aria-busy');
+        if (searchStatus) searchStatus.textContent = '';
+        activeIndex = -1;
+    };
+
+    const showSearchMessage = (message) => {
+        if (!searchResults) return;
+        const node = document.createElement('p');
+        node.className = 'admin-search-message';
+        node.textContent = message;
+        searchResults.replaceChildren(node);
+        searchResults.removeAttribute('hidden');
+        searchInput?.setAttribute('aria-expanded', 'true');
+        searchInput?.removeAttribute('aria-activedescendant');
+        if (searchStatus) searchStatus.textContent = message;
         activeIndex = -1;
     };
 
     const renderSearch = (groups) => {
         if (!searchResults) return;
         if (!groups.length) {
-            searchResults.innerHTML = '<div class="admin-search-group"><strong>No matches</strong></div>';
-            searchResults.removeAttribute('hidden');
+            showSearchMessage(searchForm.dataset.searchEmpty);
             return;
         }
-        searchResults.innerHTML = groups.map((group) => `
-            <div class="admin-search-group">
-                <strong>${escapeHtml(group.label)}</strong>
-                ${group.items.map((item) => `
-                    <a class="admin-search-item" href="${escapeAttr(item.href)}">
+        searchResults.innerHTML = groups.map((group, groupIndex) => `
+            <div class="admin-search-group" role="group" aria-label="${escapeAttr(group.label)}">
+                <strong aria-hidden="true">${escapeHtml(group.label)}</strong>
+                ${group.items.map((item, itemIndex) => `
+                    <a class="admin-search-item" id="admin-result-${groupIndex}-${itemIndex}" role="option" aria-selected="false" href="${escapeAttr(item.href)}">
                         ${escapeHtml(item.title)}
                         <span>${escapeHtml(item.meta || '')}</span>
                     </a>
@@ -87,38 +136,57 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `).join('');
         searchResults.removeAttribute('hidden');
+        searchInput?.setAttribute('aria-expanded', 'true');
+        searchInput?.removeAttribute('aria-activedescendant');
+        if (searchStatus) searchStatus.textContent = '';
         activeIndex = -1;
     };
 
-    const runSearch = async (query) => {
-        if (!window.AtteCertAdmin?.searchUrl) return;
-        const url = new URL(window.AtteCertAdmin.searchUrl, window.location.origin);
+    const runSearch = async (query, sequence) => {
+        if (!searchForm || sequence !== searchSequence) return;
+        searchRequest = new AbortController();
+        searchForm.setAttribute('aria-busy', 'true');
+        showSearchMessage(searchForm.dataset.searchLoading);
+        // The form action works under the existing CSP and includes subdirectory installs.
+        const url = new URL(searchForm.action, window.location.origin);
         url.searchParams.set('q', query);
         const response = await fetch(url.toString(), {
             headers: {
                 Accept: 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
             },
+            signal: searchRequest.signal,
         });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error('Search request failed');
         const data = await response.json();
+        if (sequence !== searchSequence || searchInput.value.trim() !== query) return;
+        searchForm.removeAttribute('aria-busy');
         renderSearch(data.results || []);
     };
 
     searchInput?.addEventListener('input', () => {
         const query = searchInput.value.trim();
-        clearTimeout(searchTimer);
+        hideSearch();
         if (query.length < 2) {
-            hideSearch();
             return;
         }
+        const sequence = searchSequence;
         searchTimer = setTimeout(() => {
-            runSearch(query).catch(() => hideSearch());
+            runSearch(query, sequence).catch((error) => {
+                if (error.name === 'AbortError' || sequence !== searchSequence) return;
+                searchForm?.removeAttribute('aria-busy');
+                showSearchMessage(searchForm.dataset.searchError);
+            });
         }, 220);
     });
 
     searchInput?.addEventListener('keydown', (event) => {
         if (!searchResults || searchResults.hasAttribute('hidden')) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            hideSearch();
+            return;
+        }
         const items = [...searchResults.querySelectorAll('.admin-search-item')];
         if (!items.length) return;
         if (event.key === 'ArrowDown') {
@@ -131,19 +199,24 @@ document.addEventListener('DOMContentLoaded', () => {
             event.preventDefault();
             window.location.href = items[activeIndex].href;
             return;
-        } else if (event.key === 'Escape') {
-            hideSearch();
-            return;
         } else {
             return;
         }
-        items.forEach((item, index) => item.classList.toggle('is-active', index === activeIndex));
+        items.forEach((item, index) => {
+            item.classList.toggle('is-active', index === activeIndex);
+            item.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+        });
+        searchInput.setAttribute('aria-activedescendant', items[activeIndex].id);
         items[activeIndex]?.scrollIntoView({ block: 'nearest' });
     });
 
     document.addEventListener('click', (event) => {
         if (searchForm && !searchForm.contains(event.target)) hideSearch();
     });
+    document.addEventListener('focusin', (event) => {
+        if (searchForm && !searchForm.contains(event.target)) hideSearch();
+    });
+    searchForm?.addEventListener('submit', hideSearch);
 
     const tabRoot = document.querySelector('[data-case-tabs]');
     if (tabRoot) {
@@ -161,6 +234,16 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         buttons.forEach((button) => {
             button.addEventListener('click', () => activate(button.dataset.tab));
+        });
+        document.querySelectorAll('[data-jump-tab]').forEach((link) => {
+            link.addEventListener('click', (event) => {
+                const button = buttons.find((item) => item.dataset.tab === link.dataset.jumpTab);
+                if (!button) return;
+                event.preventDefault();
+                activate(button.dataset.tab);
+                button.focus();
+                button.scrollIntoView({ block: 'nearest' });
+            });
         });
         const hash = (window.location.hash || '#overview').replace('#', '');
         const initial = buttons.some((button) => button.dataset.tab === hash) ? hash : 'overview';

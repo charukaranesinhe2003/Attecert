@@ -8,10 +8,11 @@ use App\Core\Controller;
 use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
+use App\Services\AuthService;
 
 final class SearchController extends Controller
 {
-    public function __construct(\App\Core\Validator $validator, private Database $db)
+    public function __construct(\App\Core\Validator $validator, private Database $db, private AuthService $auth)
     {
         parent::__construct($validator);
     }
@@ -40,7 +41,9 @@ final class SearchController extends Controller
         $like = '%' . $q . '%';
         $digits = preg_replace('/\D+/', '', $q) ?: $q;
         $groups = [];
+        $canCases = $this->auth->can('cases.view');
 
+        if ($canCases) {
         $groups[] = ['label' => 'Cases', 'items' => array_map(static fn (array $row): array => [
             'title' => $row['number'] . ' · ' . $row['customer_name'],
             'meta' => $row['document_title'] . ' · ' . ($row['status_name'] ?: ''),
@@ -58,7 +61,9 @@ final class SearchController extends Controller
              LIMIT 8',
             [$like, $q, $like, $like, $like, $like, '%' . $digits . '%', $like, $q, $q . '%']
         ))];
+        }
 
+        if ($this->auth->can('customers.view')) {
         $groups[] = ['label' => 'Customers', 'items' => array_map(static fn (array $row): array => [
             'title' => $row['name'],
             'meta' => $row['email'] . ($row['phone'] ? ' · ' . $row['phone'] : ''),
@@ -72,40 +77,51 @@ final class SearchController extends Controller
              ORDER BY name LIMIT 6',
             [$like, $like, $like, $like, '%' . $digits . '%', '%' . $digits . '%']
         ))];
+        }
 
+        if ($this->auth->can('quotations.create')) {
         $groups[] = ['label' => 'Quotations', 'items' => array_map(static fn (array $row): array => [
             'title' => $row['number'],
             'meta' => $row['customer_name'] . ' · ' . $row['status'],
-            'href' => url('/admin/cases/' . $row['case_id'] . '#quote'),
+            'href' => url('/admin/quotations/' . $row['id']),
         ], $this->db->fetchAll(
             'SELECT q.id, q.number, q.status, q.case_id, cu.name AS customer_name
              FROM quotations q INNER JOIN customers cu ON cu.id = q.customer_id
-             WHERE q.number LIKE ? ORDER BY q.created_at DESC LIMIT 5',
+             INNER JOIN cases c ON c.id = q.case_id
+             WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL AND q.number LIKE ? ORDER BY q.created_at DESC LIMIT 5',
             [$like]
         ))];
+        }
 
+        if ($this->auth->can('invoices.create')) {
         $groups[] = ['label' => 'Invoices', 'items' => array_map(static fn (array $row): array => [
             'title' => $row['number'],
             'meta' => $row['customer_name'] . ' · ' . $row['status'],
-            'href' => url('/admin/cases/' . $row['case_id'] . '#finance'),
+            'href' => url('/admin/invoices/' . $row['id']),
         ], $this->db->fetchAll(
             'SELECT i.id, i.number, i.status, i.case_id, cu.name AS customer_name
              FROM invoices i INNER JOIN customers cu ON cu.id = i.customer_id
-             WHERE i.number LIKE ? ORDER BY i.created_at DESC LIMIT 5',
+             INNER JOIN cases c ON c.id = i.case_id
+             WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL AND i.number LIKE ? ORDER BY i.created_at DESC LIMIT 5',
             [$like]
         ))];
+        }
 
+        if ($this->auth->can('payments.view')) {
         $groups[] = ['label' => 'Payments', 'items' => array_map(static fn (array $row): array => [
             'title' => $row['number'],
             'meta' => ($row['reference'] ?: $row['method']) . ' · ' . $row['customer_name'],
-            'href' => url('/admin/cases/' . $row['case_id'] . '#finance'),
+            'href' => $canCases ? url('/admin/cases/' . $row['case_id'] . '#finance') : url('/admin/payments/' . $row['id'] . '/receipt'),
         ], $this->db->fetchAll(
-            'SELECT p.number, p.method, p.reference, p.case_id, cu.name AS customer_name
+            'SELECT p.id, p.number, p.method, p.reference, p.case_id, cu.name AS customer_name
              FROM payments p INNER JOIN customers cu ON cu.id = p.customer_id
-             WHERE p.number LIKE ? OR p.reference LIKE ? ORDER BY p.created_at DESC LIMIT 5',
+             INNER JOIN cases c ON c.id = p.case_id
+             WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL AND (p.number LIKE ? OR p.reference LIKE ?) ORDER BY p.created_at DESC LIMIT 5',
             [$like, $like]
         ))];
+        }
 
+        if ($this->auth->can('quotes.manage')) {
         $groups[] = ['label' => 'Quote requests', 'items' => array_map(static fn (array $row): array => [
             'title' => $row['name'],
             'meta' => $row['email'] . ' · ' . $row['status'],
@@ -115,6 +131,7 @@ final class SearchController extends Controller
              WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? ORDER BY created_at DESC LIMIT 5',
             [$like, $like, $like]
         ))];
+        }
 
         return array_values(array_filter($groups, static fn (array $group): bool => $group['items'] !== []));
     }

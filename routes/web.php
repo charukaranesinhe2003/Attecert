@@ -149,6 +149,7 @@ return function (Router $router): void {
     $router->get('/admin/documents', [AdminDocumentController::class, 'index'], [...$staff, 'can:documents.download']);
     $router->get('/admin/documents/{id}/download', [AdminDocumentController::class, 'download'], [...$staff, 'can:documents.download']);
     $router->post('/admin/documents/{id}/archive', [AdminDocumentController::class, 'archive'], [...$staff, 'can:documents.delete']);
+    $router->post('/admin/documents/{id}/visibility', [AdminDocumentController::class, 'visibility'], [...$staff, 'can:documents.upload']);
     $router->get('/admin/mofa', [ProcessController::class, 'mofa'], [...$staff, 'can:cases.edit']);
     $router->post('/admin/cases/{id}/mofa', [ProcessController::class, 'saveMofa'], [...$staff, 'can:cases.edit']);
     $router->get('/admin/embassy', [ProcessController::class, 'embassy'], [...$staff, 'can:cases.edit']);

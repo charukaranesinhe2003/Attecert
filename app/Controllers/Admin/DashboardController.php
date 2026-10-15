@@ -18,16 +18,11 @@ final class DashboardController extends Controller
 
     public function index(Request $request): Response
     {
-        $from = (string) $request->query('from', date('Y-m-01'));
-        $to = (string) $request->query('to', date('Y-m-d'));
-
         return $this->view('admin/dashboard', [
             'title' => __('admin.dashboard'),
             'robots' => 'noindex',
             'active' => 'dashboard',
-            'from' => $from,
-            'to' => $to,
-            'metrics' => $this->reports->dashboard($from, $to),
+            'metrics' => $this->reports->dashboard(),
             'hidePageHeader' => true,
         ], 'layouts/admin');
     }

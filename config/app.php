@@ -12,4 +12,5 @@ return [
     'locales' => ['en' => 'English', 'si' => 'සිංහල', 'ta' => 'தமிழ்'],
     'default_locale' => 'en',
     'upload_max_mb' => (int) env('UPLOAD_MAX_MB', '10'),
+    'storage_path' => (string) env('APP_STORAGE_PATH', base_path('storage')),
 ];

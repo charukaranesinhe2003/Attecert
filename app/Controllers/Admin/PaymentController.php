@@ -39,7 +39,7 @@ final class PaymentController extends Controller
         $data = $this->validate($request, [
             'amount' => 'required|numeric|min:0.01',
             'method' => 'required|in:cash,bank_transfer,card,online,other,refund',
-            'paid_at' => 'required|max:20',
+            'paid_at' => 'required|date',
             'reference' => 'nullable|max:80',
             'receipt_reference' => 'nullable|max:80',
             'notes' => 'nullable|max:1000',

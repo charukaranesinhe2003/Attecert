@@ -209,7 +209,12 @@ final class CaseService
             $like = '%' . $filters['q'] . '%';
             array_push($params, $like, $like, $like, $like, $like);
         }
-        if (($filters['status'] ?? '') !== '') {
+        if (($filters['status'] ?? '') === 'active') {
+            $sql .= ' AND s.is_terminal = 0';
+        } elseif (($filters['status'] ?? '') === 'unquoted') {
+            $sql .= ' AND s.code IN (\'new_request\', \'under_review\')
+                      AND NOT EXISTS (SELECT 1 FROM quotations q WHERE q.case_id = c.id)';
+        } elseif (($filters['status'] ?? '') !== '') {
             $sql .= ' AND s.code = ?';
             $params[] = $filters['status'];
         }

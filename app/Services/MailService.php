@@ -81,7 +81,7 @@ final class MailService
         if ($log === null) {
             return ['status' => 'failed', 'error' => 'Email log not found.'];
         }
-        $path = base_path('storage/mail/' . $log['body_path']);
+        $path = storage_path('mail/' . $log['body_path']);
         $html = is_file($path) ? (string) file_get_contents($path) : '<p>' . e($log['subject']) . '</p>';
         if (!$this->smtpReady()) {
             $this->db->run(
@@ -129,7 +129,7 @@ final class MailService
     private function storeBody(string $html): string
     {
         $name = date('Ymd') . '-' . bin2hex(random_bytes(8)) . '.html';
-        $dir = base_path('storage/mail');
+        $dir = storage_path('mail');
         if (!is_dir($dir)) {
             mkdir($dir, 0775, true);
         }

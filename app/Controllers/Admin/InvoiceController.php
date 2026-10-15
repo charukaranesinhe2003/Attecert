@@ -26,14 +26,18 @@ final class InvoiceController extends Controller
     {
         $q = trim((string) $request->query('q', ''));
         $status = (string) $request->query('status', '');
-        $sql = 'SELECT i.*, c.number AS case_number, cu.name AS customer_name FROM invoices i INNER JOIN cases c ON c.id = i.case_id INNER JOIN customers cu ON cu.id = i.customer_id WHERE 1 = 1';
+        $sql = 'SELECT i.*, c.number AS case_number, cu.name AS customer_name FROM invoices i INNER JOIN cases c ON c.id = i.case_id INNER JOIN customers cu ON cu.id = i.customer_id WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL';
         $params = [];
         if ($q !== '') {
             $sql .= ' AND (i.number LIKE ? OR c.number LIKE ? OR cu.name LIKE ?)';
             $like = '%' . $q . '%';
             $params = [$like, $like, $like];
         }
-        if ($status !== '') {
+        if ($status === 'unpaid') {
+            $sql .= ' AND i.status IN (\'issued\', \'sent\', \'partially_paid\', \'overdue\')';
+        } elseif ($status === 'overdue') {
+            $sql .= ' AND i.status IN (\'issued\', \'sent\', \'partially_paid\', \'overdue\') AND i.due_at IS NOT NULL AND i.due_at < CURDATE()';
+        } elseif ($status !== '') {
             $sql .= ' AND i.status = ?';
             $params[] = $status;
         }

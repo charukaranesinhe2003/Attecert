@@ -50,6 +50,13 @@ function config(string $key, mixed $default = null): mixed
     return Config::get($key, $default);
 }
 
+function storage_path(string $path = ''): string
+{
+    $root = rtrim((string) config('app.storage_path', base_path('storage')), '/\\');
+
+    return $path === '' ? $root : $root . '/' . ltrim($path, '/\\');
+}
+
 function e(?string $value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -81,6 +88,26 @@ function locale(): string
     return in_array($locale, $allowed, true) ? $locale : 'en';
 }
 
+function web_base(): string
+{
+    $script = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+    $dir = rtrim(str_replace('\\', '/', dirname($script)), '/');
+    if ($dir === '' || $dir === '/' || $dir === '.') {
+        return '';
+    }
+    $uri = rawurldecode(parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
+    if (str_ends_with($dir, '/public')) {
+        $parent = substr($dir, 0, -strlen('/public'));
+        $underParent = $parent !== '' && ($uri === $parent || str_starts_with($uri, $parent . '/'));
+        $underPublic = $uri === $dir || str_starts_with($uri, $dir . '/');
+        if ($underParent && !$underPublic) {
+            return $parent;
+        }
+    }
+
+    return $dir;
+}
+
 function url(string $path = '/'): string
 {
     $path = '/' . ltrim($path, '/');
@@ -92,7 +119,7 @@ function url(string $path = '/'): string
         $path .= (str_contains($path, '?') ? '&' : '?') . 'lang=' . rawurlencode($locale);
     }
 
-    return $path;
+    return web_base() . $path;
 }
 
 function absolute_url(string $path = '/'): string
@@ -100,8 +127,18 @@ function absolute_url(string $path = '/'): string
     if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
         return $path;
     }
+    $relative = url($path);
+    $base = web_base();
+    if ($base !== '' && str_starts_with($relative, $base)) {
+        $relative = substr($relative, strlen($base)) ?: '/';
+    }
+    $configured = rtrim((string) config('app.url'), '/');
+    $configuredPath = rtrim((string) (parse_url($configured, PHP_URL_PATH) ?: ''), '/');
+    if ($configuredPath !== '' && $configuredPath !== '/') {
+        return $configured . $relative;
+    }
 
-    return rtrim((string) config('app.url'), '/') . url($path);
+    return $configured . $base . $relative;
 }
 
 function asset(string $path): string
@@ -110,7 +147,7 @@ function asset(string $path): string
     $full = base_path('public' . $relative);
     $version = is_file($full) ? (string) filemtime($full) : '1';
 
-    return $relative . '?v=' . $version;
+    return web_base() . $relative . '?v=' . $version;
 }
 
 function redirect_to(string $path): \App\Core\Response

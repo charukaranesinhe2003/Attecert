@@ -101,7 +101,7 @@ final class Kernel
 
     private function logException(Throwable $exception): void
     {
-        $dir = base_path('storage/logs');
+        $dir = storage_path('logs');
         if (!is_dir($dir)) {
             mkdir($dir, 0775, true);
         }

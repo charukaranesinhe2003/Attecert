@@ -18,7 +18,6 @@ $auth = app(\App\Services\AuthService::class);
 $user = $auth->user() ?? [];
 $can = static fn (?string $permission): bool => $permission === null || $auth->can($permission);
 $navItems = [
-    ['dashboard', '/admin', 'dashboard', 'admin.dashboard', null],
     ['cases', '/admin/cases', 'document', 'admin.cases', 'cases.view'],
     ['quotes', '/admin/quote-requests', 'mail', 'admin.quote_requests', 'quotes.manage'],
     ['documents', '/admin/documents', 'file', 'admin.documents', 'documents.download'],
@@ -41,31 +40,43 @@ $navItems = [
     ['emails', '/admin/emails', 'send', 'admin.emails', 'quotations.send'],
     ['settings', '/admin/settings', 'settings', 'admin.settings', 'settings.manage'],
 ];
+$navGroups = [
+    'operations' => ['cases', 'quotes', 'customers', 'contacts', 'documents', 'processing'],
+    'finance' => ['quotations', 'invoices', 'payments', 'reports'],
+    'website' => ['content', 'services', 'countries', 'articles', 'faqs', 'document_types', 'translations'],
+    'administration' => ['users', 'audit', 'emails', 'settings'],
+];
 $quickActions = array_values(array_filter([
-    $can('cases.create') ? ['/admin/cases/create', __('admin.new_case')] : null,
-    $can('customers.edit') ? ['/admin/customers', __('admin.new_customer')] : null,
-    $can('quotations.create') ? ['/admin/cases', __('admin.new_quotation_hint')] : null,
-    $can('payments.create') ? ['/admin/invoices', __('admin.record_payment')] : null,
-    $can('documents.upload') ? ['/admin/documents', __('admin.upload_document')] : null,
+    $can('cases.create') && $can('cases.view') ? ['/admin/cases/create', __('admin.new_case')] : null,
+    $can('quotations.create') && $can('cases.view') ? ['/admin/cases?status=unquoted', __('admin.new_quotation_hint')] : null,
+    $can('payments.create') && $can('invoices.create') ? ['/admin/invoices?status=unpaid', __('admin.record_payment')] : null,
+    $can('documents.upload') && $can('cases.view') ? ['/admin/cases', __('admin_overview.upload_to_case')] : null,
     $can('content.manage') ? ['/admin/articles/create', __('admin.new_article')] : null,
 ]));
 ?>
+<a class="skip-link" href="#admin-main-content"><?= e(__('admin_overview.skip_content')) ?></a>
 <div class="portal-shell admin-shell">
     <aside class="portal-side admin-side" id="portal-nav" aria-label="<?= e(__('admin.dashboard')) ?>">
         <a class="portal-brand" href="<?= e(url('/admin')) ?>">
             <img src="<?= e(asset('brand/logo-mark.png')) ?>" alt="">
             <span>AtteCert</span>
         </a>
+        <button class="btn admin-nav-close" type="button" data-portal-close><?= e(__('actions.close')) ?></button>
         <nav class="admin-nav">
-            <?php foreach ($navItems as [$key, $href, $icon, $label, $permission]):
-                if (!$can($permission)) {
-                    continue;
-                }
+            <a class="<?= ($active ?? '') === 'dashboard' ? 'is-active' : '' ?>" href="<?= e(url('/admin')) ?>" <?= ($active ?? '') === 'dashboard' ? 'aria-current="page"' : '' ?>><?= icon('dashboard', 'icon icon-sm') ?><span><?= e(__('admin.dashboard')) ?></span></a>
+            <?php foreach ($navGroups as $group => $keys):
+                $items = array_filter($navItems, static fn (array $item): bool => in_array($item[0], $keys, true) && $can($item[4]));
+                if ($items === []) { continue; }
             ?>
-                <a class="<?= ($active ?? '') === $key ? 'is-active' : '' ?>" href="<?= e(url($href)) ?>">
+            <div class="admin-nav-group">
+                <p class="admin-nav-heading"><?= e(__('admin_overview.' . $group)) ?></p>
+                <?php foreach ($items as [$key, $href, $icon, $label, $permission]): ?>
+                <a class="<?= ($active ?? '') === $key ? 'is-active' : '' ?>" href="<?= e(url($href)) ?>" <?= ($active ?? '') === $key ? 'aria-current="page"' : '' ?>>
                     <?= icon($icon, 'icon icon-sm') ?>
                     <span><?= e(__($label)) ?></span>
                 </a>
+                <?php endforeach; ?>
+            </div>
             <?php endforeach; ?>
         </nav>
         <form class="admin-logout" method="post" action="<?= e(url('/logout')) ?>">
@@ -73,17 +84,19 @@ $quickActions = array_values(array_filter([
             <button class="btn btn-ghost admin-logout-btn" type="submit"><?= e(__('nav.logout')) ?></button>
         </form>
     </aside>
+    <button class="admin-nav-backdrop" type="button" data-portal-backdrop aria-label="<?= e(__('actions.close')) ?>" tabindex="-1" hidden></button>
     <div class="portal-main admin-main">
         <header class="admin-topbar">
-            <button class="btn portal-toggle" type="button" data-portal-nav aria-label="Menu"><?= icon('menu') ?></button>
-            <form class="admin-search" action="<?= e(url('/admin/search')) ?>" method="get" data-admin-search role="search">
+            <button class="btn portal-toggle" type="button" data-portal-nav aria-label="Menu" aria-controls="portal-nav" aria-expanded="false"><?= icon('menu') ?></button>
+            <form class="admin-search" action="<?= e(url('/admin/search')) ?>" method="get" data-admin-search role="search" data-search-loading="<?= e(__('admin_overview.search_loading')) ?>" data-search-error="<?= e(__('admin_overview.search_error')) ?>" data-search-empty="<?= e(__('admin.search_empty')) ?>">
                 <label class="sr-only" for="admin-search-q"><?= e(__('admin.search_everything')) ?></label>
-                <input id="admin-search-q" type="search" name="q" value="<?= e((string) ($q ?? '')) ?>" placeholder="<?= e(__('admin.search_everything')) ?>" autocomplete="off" data-admin-search-input>
-                <div class="admin-search-results" data-admin-search-results hidden></div>
+                <input id="admin-search-q" type="search" name="q" value="<?= e((string) ($q ?? '')) ?>" placeholder="<?= e(__('admin.search_everything')) ?>" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="admin-search-results" data-admin-search-input>
+                <div id="admin-search-results" class="admin-search-results" data-admin-search-results role="listbox" aria-label="<?= e(__('admin.search')) ?>" hidden></div>
+                <span class="sr-only" data-admin-search-status role="status" aria-live="polite"></span>
             </form>
             <?php if ($quickActions !== []): ?>
                 <div class="admin-quick" data-admin-quick>
-                    <button class="btn btn-primary" type="button" data-admin-quick-toggle aria-expanded="false" aria-haspopup="true">+ <?= e(__('admin.new')) ?></button>
+                    <button class="btn btn-primary" type="button" data-admin-quick-toggle aria-expanded="false" aria-haspopup="true"><?= e(__('admin_overview.quick_actions')) ?></button>
                     <div class="admin-quick-menu" data-admin-quick-menu hidden>
                         <?php foreach ($quickActions as [$href, $label]): ?>
                             <a href="<?= e(url($href)) ?>"><?= e($label) ?></a>
@@ -114,17 +127,11 @@ $quickActions = array_values(array_filter([
         <?php endif; ?>
         <?php if ($message = flash('success')): ?><p class="toast toast-success" role="status"><?= e($message) ?></p><?php endif; ?>
         <?php if ($message = flash('error')): ?><p class="toast toast-error" role="alert"><?= e($message) ?></p><?php endif; ?>
-        <div class="admin-content">
+        <main class="admin-content" id="admin-main-content" tabindex="-1">
             <?= $content ?>
-        </div>
+        </main>
     </div>
 </div>
-<script>
-window.AtteCertAdmin = {
-    searchUrl: <?= json_encode(url('/admin/search'), JSON_UNESCAPED_SLASHES) ?>,
-    csrf: <?= json_encode(csrf_token()) ?>
-};
-</script>
 <script src="<?= e(asset('js/public.js')) ?>" defer></script>
 <script src="<?= e(asset('js/admin.js')) ?>" defer></script>
 </body>

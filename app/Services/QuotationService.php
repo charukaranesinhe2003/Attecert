@@ -98,7 +98,11 @@ final class QuotationService
 
         return $this->db->transaction(function () use ($case, $totals, $payload, $staffId, $issue, $days): int {
             $existingId = (int) ($payload['quotation_id'] ?? 0);
-            $existing = $existingId > 0 ? $this->db->fetch('SELECT * FROM quotations WHERE id = ? AND case_id = ?', [$existingId, $case['id']]) : null;
+            $source = $existingId > 0 ? $this->db->fetch('SELECT * FROM quotations WHERE id = ? AND case_id = ? FOR UPDATE', [$existingId, $case['id']]) : null;
+            if ($existingId > 0 && $source === null) {
+                throw new \RuntimeException('The source quotation does not belong to this case.');
+            }
+            $existing = $source;
             if ($existing && $existing['status'] !== 'draft') {
                 $existing = null;
             }
@@ -120,7 +124,7 @@ final class QuotationService
                 );
             } else {
                 if ($existingId > 0) {
-                    $previous = $this->db->fetch('SELECT * FROM quotations WHERE id = ?', [$existingId]);
+                    $previous = $source;
                     if ($previous && !in_array($previous['status'], ['draft', 'accepted', 'converted'], true)) {
                         $this->db->run('UPDATE quotations SET status = ? WHERE id = ?', ['superseded', $previous['id']]);
                     }
@@ -187,7 +191,7 @@ final class QuotationService
             $bundle['quotation']['number'] . '.pdf'
         );
         if ($bundle['quotation']['status'] === 'draft') {
-            $this->db->run('UPDATE quotations SET status = ?, issued_at = COALESCE(issued_at, NOW()) WHERE id = ?', ['sent', $quotationId]);
+            $this->db->run('UPDATE quotations SET status = ?, issued_at = COALESCE(issued_at, NOW()) WHERE id = ? AND status = ?', ['sent', $quotationId, 'draft']);
         }
         if ($result['status'] === 'sent') {
             $this->db->run('UPDATE quotations SET sent_at = NOW() WHERE id = ?', [$quotationId]);
@@ -207,16 +211,15 @@ final class QuotationService
 
     public function accept(int $quotationId, int $userId, string $ip): int
     {
-        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ?', [$quotationId]);
+        $invoiceId = $this->db->transaction(function () use ($quotationId, $userId, $ip): int {
+        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
         if ($quotation === null || !in_array($quotation['status'], ['sent', 'viewed'], true)) {
             throw new \RuntimeException('This quotation cannot be accepted.');
         }
         if ($quotation['valid_until'] !== null && $quotation['valid_until'] < date('Y-m-d')) {
             $this->db->run('UPDATE quotations SET status = ? WHERE id = ?', ['expired', $quotationId]);
-            throw new \RuntimeException('This quotation has expired.');
+            return 0;
         }
-
-        return $this->db->transaction(function () use ($quotation, $userId, $ip): int {
             $this->db->run(
                 'UPDATE quotations SET status = ?, accepted_at = NOW(), accepted_ip = ?, accepted_by = ? WHERE id = ?',
                 ['accepted', $ip, $userId, $quotation['id']]
@@ -228,11 +231,17 @@ final class QuotationService
 
             return $invoiceId;
         });
+        if ($invoiceId === 0) {
+            throw new \RuntimeException('This quotation has expired.');
+        }
+
+        return $invoiceId;
     }
 
     public function reject(int $quotationId, int $userId, string $reason): void
     {
-        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ?', [$quotationId]);
+        $this->db->transaction(function () use ($quotationId, $userId, $reason): void {
+        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
         if ($quotation === null || !in_array($quotation['status'], ['sent', 'viewed'], true)) {
             throw new \RuntimeException('This quotation cannot be rejected.');
         }
@@ -241,6 +250,7 @@ final class QuotationService
             ['rejected', $reason, $quotationId]
         );
         $this->audit->log($userId, 'quotation_rejected', 'quotation', $quotationId, ['reason' => $reason]);
+        });
     }
 
     public function markViewed(int $quotationId): void

@@ -28,7 +28,7 @@ final class QuotationController extends Controller
     {
         $q = trim((string) $request->query('q', ''));
         $status = (string) $request->query('status', '');
-        $sql = 'SELECT q.*, c.number AS case_number, cu.name AS customer_name FROM quotations q INNER JOIN cases c ON c.id = q.case_id INNER JOIN customers cu ON cu.id = q.customer_id WHERE 1 = 1';
+        $sql = 'SELECT q.*, c.number AS case_number, cu.name AS customer_name FROM quotations q INNER JOIN cases c ON c.id = q.case_id INNER JOIN customers cu ON cu.id = q.customer_id WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL';
         $params = [];
         if ($q !== '') {
             $sql .= ' AND (q.number LIKE ? OR c.number LIKE ? OR cu.name LIKE ?)';

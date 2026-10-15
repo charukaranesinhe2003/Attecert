@@ -51,12 +51,12 @@ final class PdfService
     private function write(string $view, array $data, string $folder, string $filename): string
     {
         $html = View::render('pdf/' . $view, $data);
-        $directory = base_path('storage/' . $folder);
+        $directory = storage_path($folder);
         if (!is_dir($directory)) {
             mkdir($directory, 0775, true);
         }
         $target = $directory . '/' . $filename;
-        $temp = base_path('storage/cache/mpdf');
+        $temp = storage_path('cache/mpdf');
         if (!is_dir($temp)) {
             mkdir($temp, 0775, true);
         }

@@ -97,10 +97,14 @@ final class CaseController extends Controller
             throw new HttpException(404);
         }
 
-        $quotations = $this->db->fetchAll('SELECT * FROM quotations WHERE case_id = ? ORDER BY id DESC', [(int) $id]);
-        $invoices = $this->db->fetchAll('SELECT * FROM invoices WHERE case_id = ? ORDER BY id DESC', [(int) $id]);
-        $payments = $this->db->fetchAll('SELECT * FROM payments WHERE case_id = ? ORDER BY id DESC', [(int) $id]);
-        $documents = $this->documents->forCase((int) $case['id']);
+        $canQuote = $this->auth->can('quotations.create');
+        $canInvoice = $this->auth->can('invoices.create');
+        $canPayment = $this->auth->can('payments.view');
+        $quotations = $canQuote ? $this->db->fetchAll('SELECT * FROM quotations WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [];
+        $quotationItems = $quotations === [] ? [] : $this->db->fetchAll('SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY id', [(int) $quotations[0]['id']]);
+        $invoices = $canInvoice ? $this->db->fetchAll('SELECT * FROM invoices WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [];
+        $payments = $canPayment ? $this->db->fetchAll('SELECT * FROM payments WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [];
+        $documents = $this->auth->can('documents.download') ? $this->documents->forCase((int) $case['id']) : [];
         $mofa = $this->db->fetch('SELECT * FROM mofa_processes WHERE case_id = ? ORDER BY id DESC LIMIT 1', [(int) $id]);
         $embassy = $this->db->fetch('SELECT * FROM embassy_processes WHERE case_id = ? ORDER BY id DESC LIMIT 1', [(int) $id]);
 
@@ -116,11 +120,14 @@ final class CaseController extends Controller
             'documentTypes' => $this->catalog->documentTypes(),
             'documents' => $documents,
             'quotations' => $quotations,
+            'quotationItems' => $quotationItems,
             'invoices' => $invoices,
             'payments' => $payments,
             'mofa' => $mofa,
             'embassy' => $embassy,
-            'nextStep' => NextStep::forCase($case, $quotations, $invoices, $mofa, $embassy),
+            'nextStep' => $canQuote && $canInvoice
+                ? NextStep::forCase($case, $quotations, $invoices, $mofa, $embassy)
+                : ['label' => 'Review the case history and use the actions available to your role.', 'tab' => 'overview'],
             'activity' => $this->activityTimeline((int) $id, $case, $documents, $quotations, $invoices, $payments),
             'staff' => $this->db->fetchAll('SELECT u.id, u.name FROM users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id WHERE r.code <> \'customer\' AND u.deleted_at IS NULL GROUP BY u.id, u.name'),
         ], 'layouts/admin');
@@ -256,6 +263,18 @@ final class CaseController extends Controller
                 'pricing_type' => 'custom',
             ];
         }
+        foreach ((array) $request->input('custom_lines', []) as $line) {
+            if (!is_array($line) || trim((string) ($line['description'] ?? '')) === '') {
+                continue;
+            }
+            $lines[] = [
+                'service_id' => null,
+                'quantity' => $line['quantity'] ?? 1,
+                'unit_price' => $line['unit_price'] ?? 0,
+                'description' => trim((string) $line['description']),
+                'pricing_type' => 'custom',
+            ];
+        }
         try {
             $quotationId = $this->quotations->save((int) $id, [
                 'quotation_id' => (int) $request->input('quotation_id', 0),
@@ -281,8 +300,10 @@ final class CaseController extends Controller
             return $this->redirect('/admin/cases/' . $id . '#quote');
         } catch (\Throwable $exception) {
             flash('error', $exception->getMessage());
+            $_SESSION['_old'] = $request->all();
+            unset($_SESSION['_old']['_token']);
 
-            return $this->redirect('/admin/cases/' . $id);
+            return $this->redirect('/admin/cases/' . $id . '#quote');
         }
     }
 
