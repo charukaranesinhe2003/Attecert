@@ -1,0 +1,22 @@
+<FilesMatch "^\.(env|git)">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Prevent directory browsing
+    Options -Indexes
+
+    # Block access to internal directories
+    RewriteRule ^(app|bootstrap|cli|config|database|resources|routes|storage|tests|vendor)(/.*)?$ - [F,L]
+
+    # Route root request to public/
+    RewriteRule ^$ public/ [L]
+
+    # Route all other non-existing files/folders through public/
+    RewriteCond %{REQUEST_URI} !^/public/ [NC]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

@@ -25,9 +25,19 @@ final class Request
         $base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
         if ($base !== '' && $base !== '/' && str_starts_with($path, $base)) {
             $path = substr($path, strlen($base)) ?: '/';
+        } elseif (str_ends_with($base, '/public')) {
+            $parentBase = substr($base, 0, -7);
+            if ($parentBase !== '' && $parentBase !== '/' && str_starts_with($path, $parentBase)) {
+                $path = substr($path, strlen($parentBase)) ?: '/';
+            }
         }
-        if ($path === '') {
+        if (str_starts_with($path, '/public/')) {
+            $path = substr($path, 7);
+        } elseif ($path === '/public') {
             $path = '/';
+        }
+        if ($path === '' || !str_starts_with($path, '/')) {
+            $path = '/' . ltrim($path, '/');
         }
 
         return new self($method, $path, $_GET, $_POST, $_FILES, $_SERVER, $_COOKIE);

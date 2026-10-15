@@ -81,8 +81,36 @@ function locale(): string
     return in_array($locale, $allowed, true) ? $locale : 'en';
 }
 
+function base_url_path(): string
+{
+    static $base = null;
+    if ($base !== null) {
+        return $base;
+    }
+
+    if (PHP_SAPI === 'cli') {
+        return $base = '';
+    }
+
+    $scriptName = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+    $scriptDir = rtrim(dirname($scriptName), '/');
+
+    if (str_ends_with($scriptDir, '/public')) {
+        $parent = substr($scriptDir, 0, -7);
+        $uri = $_SERVER['REQUEST_URI'] ?? '';
+        if (str_starts_with($uri, $scriptDir)) {
+            return $base = $scriptDir;
+        }
+
+        return $base = ($parent === '/' || $parent === '.') ? '' : $parent;
+    }
+
+    return $base = ($scriptDir === '/' || $scriptDir === '.') ? '' : $scriptDir;
+}
+
 function url(string $path = '/'): string
 {
+    $base = base_url_path();
     $path = '/' . ltrim($path, '/');
     if ($path !== '/' && str_ends_with($path, '/')) {
         $path = rtrim($path, '/');
@@ -92,7 +120,11 @@ function url(string $path = '/'): string
         $path .= (str_contains($path, '?') ? '&' : '?') . 'lang=' . rawurlencode($locale);
     }
 
-    return $path;
+    if ($path === '/') {
+        return $base === '' ? '/' : $base . '/';
+    }
+
+    return $base . $path;
 }
 
 function absolute_url(string $path = '/'): string
@@ -101,16 +133,23 @@ function absolute_url(string $path = '/'): string
         return $path;
     }
 
-    return rtrim((string) config('app.url'), '/') . url($path);
+    $appUrl = (string) config('app.url');
+    $scheme = parse_url($appUrl, PHP_URL_SCHEME) ?: 'http';
+    $host = parse_url($appUrl, PHP_URL_HOST) ?: ($_SERVER['HTTP_HOST'] ?? 'localhost');
+    $port = parse_url($appUrl, PHP_URL_PORT);
+    $origin = $scheme . '://' . $host . ($port ? ':' . $port : '');
+
+    return $origin . url($path);
 }
 
 function asset(string $path): string
 {
+    $base = base_url_path();
     $relative = '/assets/' . ltrim($path, '/');
     $full = base_path('public' . $relative);
     $version = is_file($full) ? (string) filemtime($full) : '1';
 
-    return $relative . '?v=' . $version;
+    return $base . $relative . '?v=' . $version;
 }
 
 function redirect_to(string $path): \App\Core\Response
