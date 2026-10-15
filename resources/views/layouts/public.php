@@ -18,8 +18,8 @@ $robots = $robots ?? 'index,follow';
     <meta name="robots" content="<?= e($robots) ?>">
     <meta name="csrf-token" content="<?= e(csrf_token()) ?>">
     <link rel="canonical" href="<?= e($canonical) ?>">
-    <?php foreach (array_keys(config('app.locales')) as $code): ?>
-        <link rel="alternate" hreflang="<?= e($code) ?>" href="<?= e(rtrim((string) config('app.url'), '/') . (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/') . ($code === 'en' ? '' : '?lang=' . $code)) ?>">
+    <?php foreach (array_keys((array) config('app.locales', ['en' => 'English'])) as $code): ?>
+        <link rel="alternate" hreflang="<?= e($code) ?>" href="<?= e(rtrim((string) config('app.url', ''), '/') . (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/') . ($code === 'en' ? '' : '?lang=' . $code)) ?>">
     <?php endforeach; ?>
     <link rel="alternate" hreflang="x-default" href="<?= e($canonical) ?>">
     <meta property="og:title" content="<?= e($pageTitle) ?>">
