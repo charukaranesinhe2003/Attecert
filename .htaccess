@@ -2,11 +2,19 @@
 Options -Indexes
 DirectoryIndex index.php
 
+<FilesMatch "^\.(env|git)">
+    Require all denied
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    RewriteRule ^$ public/index.php [L]
+    # Protect private paths before allowing requests through to public/.
+    RewriteRule (^|/)\.(env|git) - [F,L,NC]
+    RewriteRule ^(app|bootstrap|cli|config|database|resources|routes|storage|tests|vendor)(/|$) - [F,L,NC]
 
-    RewriteCond %{REQUEST_URI} !/public/
+    # Directory-relative matching also works when installed in a subfolder.
+    RewriteRule ^public(/|$) - [L]
+    RewriteRule ^$ public/index.php [L]
     RewriteRule ^(.*)$ public/$1 [L]
 </IfModule>

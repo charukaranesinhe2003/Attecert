@@ -49,6 +49,10 @@ php -S 127.0.0.1:8090 -t public public/router.php
 
 7. Open `http://127.0.0.1:8090`.
 
+On Windows PowerShell, run these commands from the local project folder (for
+example, `D:\Chandila\XAMP\htdocs\Attecert`). A Linux hosting path such as
+`/home/azharbio/attecert.com` is not a path on your Windows PC.
+
 ## Development accounts
 
 The seeder creates local accounts. Change them before any shared or production use.
@@ -136,3 +140,23 @@ See [the administration review](docs/admin-review.md), [first completion report]
 ## Production
 
 Set `APP_ENV=production`, `APP_DEBUG=false`, and `APP_URL` to the public HTTPS origin. Use a dedicated database user. Serve only the `public/` directory. Replace the seeded passwords and the placeholder Colombo phone, email, and WhatsApp number in Admin → Settings. The landing-page screenshot did not include readable contact details, so those values are settings rather than hard-coded claims.
+
+### Installing dependencies on cPanel
+
+The `vendor/` directory is excluded from Git, so it must be generated on the
+hosting account (or uploaded there) before the site can run. In cPanel, use
+the Composer interface if available and select the directory containing
+`composer.json`. If you have SSH or cPanel Terminal access, run the following
+on the hosting server, replacing the directory with the actual project path:
+
+```bash
+cd ~/attecert.com
+composer install --no-dev --optimize-autoloader
+```
+
+If `composer` is not recognized in cPanel Terminal, use cPanel's Composer
+interface or ask the hosting provider for its Composer 2 command. Running
+`composer install` in Windows PowerShell only creates `vendor/` on your local
+PC; it does not install dependencies on the hosting server. Confirm that
+`vendor/autoload.php` exists in the deployed project directory before loading
+the website.

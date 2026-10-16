@@ -10,7 +10,21 @@ final class Config
 
     public static function load(string $directory): void
     {
-        foreach (glob($directory . '/*.php') ?: [] as $file) {
+        if (!is_dir($directory)) {
+            return;
+        }
+
+        $files = glob($directory . '/*.php') ?: [];
+        if (empty($files) && is_readable($directory)) {
+            $scanned = @scandir($directory) ?: [];
+            foreach ($scanned as $item) {
+                if (str_ends_with($item, '.php')) {
+                    $files[] = $directory . '/' . $item;
+                }
+            }
+        }
+
+        foreach ($files as $file) {
             $key = basename($file, '.php');
             $value = require $file;
             if (is_array($value)) {

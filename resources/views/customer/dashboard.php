@@ -197,7 +197,7 @@ $code = customer_code($customer);
             <label><?= e(__('fields.city')) ?><input name="city" value="<?= e((string) $customer['city']) ?>" data-field="city"></label>
             <label><?= e(__('fields.locale')) ?>
                 <select name="locale">
-                    <?php foreach (config('app.locales') as $code => $label): ?>
+                    <?php foreach ((array) config('app.locales', ['en' => 'English']) as $code => $label): ?>
                         <option value="<?= e($code) ?>" <?= selected($user['locale'] ?? locale(), $code) ?>><?= e($label) ?></option>
                     <?php endforeach; ?>
                 </select>

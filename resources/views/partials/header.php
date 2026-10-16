@@ -34,7 +34,7 @@
                     <span class="sr-only"><?= e(__('nav.language')) ?></span>
                     <?= icon('language', 'icon icon-sm') ?>
                     <select data-lang aria-label="<?= e(__('nav.language')) ?>">
-                        <?php foreach (config('app.locales') as $code => $label): ?>
+                        <?php foreach ((array) config('app.locales', ['en' => 'English']) as $code => $label): ?>
                             <option value="<?= e(url('/language/' . $code)) ?>" <?= locale() === $code ? 'selected' : '' ?>><?= e($label) ?></option>
                         <?php endforeach; ?>
                     </select>

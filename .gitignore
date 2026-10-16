@@ -1,5 +1,6 @@
 .env
 /vendor/
+vendor.zip
 /composer.phar
 /composer-setup.php
 /storage/documents/*

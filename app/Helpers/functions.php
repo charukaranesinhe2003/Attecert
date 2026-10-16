@@ -90,6 +90,9 @@ function locale(): string
 
 function web_base(): string
 {
+    if (PHP_SAPI === 'cli' && !isset($_SERVER['REQUEST_URI'])) {
+        return '';
+    }
     $script = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
     $dir = rtrim(str_replace('\\', '/', dirname($script)), '/');
     if ($dir === '' || $dir === '/' || $dir === '.') {
@@ -98,7 +101,7 @@ function web_base(): string
     $uri = rawurldecode(parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/');
     if (str_ends_with($dir, '/public')) {
         $parent = substr($dir, 0, -strlen('/public'));
-        $underParent = $parent !== '' && ($uri === $parent || str_starts_with($uri, $parent . '/'));
+        $underParent = $parent === '' || $uri === $parent || str_starts_with($uri, $parent . '/');
         $underPublic = $uri === $dir || str_starts_with($uri, $dir . '/');
         if ($underParent && !$underPublic) {
             return $parent;
@@ -108,8 +111,14 @@ function web_base(): string
     return $dir;
 }
 
+function base_url_path(): string
+{
+    return web_base();
+}
+
 function url(string $path = '/'): string
 {
+    $base = base_url_path();
     $path = '/' . ltrim($path, '/');
     if ($path !== '/' && str_ends_with($path, '/')) {
         $path = rtrim($path, '/');
@@ -119,7 +128,11 @@ function url(string $path = '/'): string
         $path .= (str_contains($path, '?') ? '&' : '?') . 'lang=' . rawurlencode($locale);
     }
 
-    return web_base() . $path;
+    if ($path === '/') {
+        return $base === '' ? '/' : $base . '/';
+    }
+
+    return $base . $path;
 }
 
 function absolute_url(string $path = '/'): string
@@ -143,11 +156,12 @@ function absolute_url(string $path = '/'): string
 
 function asset(string $path): string
 {
+    $base = base_url_path();
     $relative = '/assets/' . ltrim($path, '/');
     $full = base_path('public' . $relative);
     $version = is_file($full) ? (string) filemtime($full) : '1';
 
-    return web_base() . $relative . '?v=' . $version;
+    return $base . $relative . '?v=' . $version;
 }
 
 function redirect_to(string $path): \App\Core\Response
