@@ -213,8 +213,8 @@ final class CaseController extends Controller
         ]);
         $visible = $request->input('customer_visible') ? true : false;
         try {
-            $this->workflow->change((int) $id, $data['status'], (int) $this->auth->id(), $data['notes'] ?? null, $visible, true);
-            flash('success', __('admin.status_updated'));
+            $changed = $this->workflow->change((int) $id, $data['status'], (int) $this->auth->id(), $data['notes'] ?? null, $visible, true, (bool) $request->input('confirm_reversal'));
+            flash('success', $changed ? __('admin.status_updated') : 'The case already has that status.');
         } catch (\Throwable $exception) {
             flash('error', $exception->getMessage());
         }
@@ -231,10 +231,10 @@ final class CaseController extends Controller
             $lines[] = [
                 'service_id' => (int) $serviceId,
                 'quantity' => $quantities[$serviceId] ?? 1,
-                'unit_price' => $prices[$serviceId] ?? '',
+                'unit_price' => $this->auth->can('quotations.create') ? ($prices[$serviceId] ?? '') : '',
             ];
         }
-        $this->cases->syncServices((int) $id, $lines);
+        $this->cases->syncServices((int) $id, $lines, $this->auth->id());
         flash('success', __('admin.saved'));
 
         return $this->redirect('/admin/cases/' . $id . '#quote');
@@ -242,6 +242,9 @@ final class CaseController extends Controller
 
     public function quotation(Request $request, string $id): Response
     {
+        if (($request->input('issue') || $request->input('email')) && !$this->auth->can('quotations.approve')) {
+            throw new HttpException(403, 'Issuing a quotation requires approval permission.');
+        }
         $lines = [];
         foreach ((array) $request->input('lines', []) as $serviceId => $line) {
             if (empty($line['selected'])) {
@@ -284,14 +287,14 @@ final class CaseController extends Controller
                 'additional_amount' => (string) $request->input('additional_amount', '0'),
                 'notes' => (string) $request->input('notes', ''),
                 'terms' => (string) $request->input('terms', ''),
-                'validity_days' => (int) $request->input('validity_days', setting('quote_validity_days', 14)),
+                'validity_days' => $request->input('validity_days', setting('quote_validity_days', 14)),
             ], (int) $this->auth->id(), (bool) $request->input('issue'), $this->auth->can('quotations.approve'));
             if ($request->input('email')) {
                 if (!$this->auth->can('quotations.send')) {
                     flash('error', __('admin.email_forbidden'));
                 } else {
                     $mail = $this->quotations->send($quotationId, (int) $this->auth->id());
-                    flash($mail['status'] === 'sent' ? 'success' : 'error', $mail['status'] === 'sent' ? __('admin.email_sent') : (string) $mail['error']);
+                    flash_mail_result($mail, __('admin.quotation_saved'));
                 }
             } else {
                 flash('success', __('admin.quotation_saved'));
@@ -299,7 +302,12 @@ final class CaseController extends Controller
 
             return $this->redirect('/admin/cases/' . $id . '#quote');
         } catch (\Throwable $exception) {
-            flash('error', $exception->getMessage());
+            if ($exception instanceof \App\Core\ValidationException) {
+                $_SESSION['_errors'] = $exception->errors();
+                flash('error', implode(' ', $exception->errors()));
+            } else {
+                flash('error', $exception->getMessage());
+            }
             $_SESSION['_old'] = $request->all();
             unset($_SESSION['_old']['_token']);
 
@@ -327,6 +335,10 @@ final class CaseController extends Controller
                 (int) $this->auth->id()
             );
             flash('success', __('documents.uploaded'));
+            $delivery = $this->documents->notificationDelivery();
+            if ($delivery !== null) {
+                flash_mail_result($delivery, __('documents.uploaded'));
+            }
         } catch (\Throwable $exception) {
             flash('error', $exception->getMessage());
         }

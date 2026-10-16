@@ -71,8 +71,12 @@ final class QuotationController extends Controller
 
     public function send(Request $request, string $id): Response
     {
+        $bundle = $this->quotations->bundle((int) $id);
+        if ($bundle['quotation']['status'] === 'draft' && !$this->auth->can('quotations.approve')) {
+            throw new \App\Core\HttpException(403, 'Issuing a draft quotation requires approval permission.');
+        }
         $result = $this->quotations->send((int) $id, (int) $this->auth->id());
-        flash($result['status'] === 'sent' ? 'success' : 'error', $result['status'] === 'sent' ? __('admin.email_sent') : (string) $result['error']);
+        flash_mail_result($result);
         $returnCase = (int) $request->input('return_case', 0);
         if ($returnCase > 0) {
             return $this->redirect('/admin/cases/' . $returnCase . '#quote');

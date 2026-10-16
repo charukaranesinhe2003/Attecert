@@ -46,6 +46,22 @@ final class TranslationService
         return $this->flatten($file);
     }
 
+    public function defaults(string $key): array
+    {
+        $values = [];
+        foreach (array_keys(config('app.locales', ['en' => 'English'])) as $locale) {
+            $values[$locale] = $this->fileValue($locale, $key) ?? $this->fileValue('en', $key) ?? '';
+        }
+
+        return $values;
+    }
+
+    public function reset(string $locale, string $key): void
+    {
+        $this->db->run('DELETE FROM ui_translations WHERE locale = ? AND trans_key = ?', [$locale, $key]);
+        unset($this->overrides[$locale]);
+    }
+
     private function override(string $locale, string $key): ?string
     {
         if (!isset($this->overrides[$locale])) {
@@ -77,6 +93,10 @@ final class TranslationService
         if (!isset($this->files[$locale])) {
             $path = base_path('resources/lang/' . $locale . '.php');
             $this->files[$locale] = is_file($path) ? require $path : [];
+            $admin = base_path('resources/lang/admin/' . $locale . '.php');
+            if (is_file($admin)) {
+                $this->files[$locale] = array_replace_recursive($this->files[$locale], require $admin);
+            }
         }
 
         return $this->files[$locale];

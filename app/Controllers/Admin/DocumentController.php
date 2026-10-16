@@ -82,6 +82,14 @@ final class DocumentController extends Controller
         $data = $this->validate($request, ['customer_visible' => 'required|in:0,1', 'confirmed' => 'required|in:1']);
         $changed = $this->documents->setVisibility((int) $id, (int) $data['customer_visible'] === 1, (int) $this->auth->id());
         flash('success', $changed ? ((int) $data['customer_visible'] === 1 ? 'Document released to the customer.' : 'Document is now private.') : 'Document visibility is already up to date.');
+        $delivery = $this->documents->notificationDelivery();
+        if ($delivery !== null) {
+            if (in_array($delivery['status'], ['sent', 'queued'], true)) {
+                flash_mail_result($delivery, 'Document released to the customer.');
+            } else {
+                flash('error', 'The file is available in the portal, but its email was not sent. ' . (string) $delivery['error']);
+            }
+        }
 
         return $this->redirect($this->listingPath($request));
     }

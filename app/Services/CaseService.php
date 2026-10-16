@@ -170,7 +170,7 @@ final class CaseService
             return null;
         }
         $case['services'] = $this->db->fetchAll(
-            'SELECT cs.*, s.code, s.pricing_type AS master_pricing, s.fixed_price, st.name
+            'SELECT cs.*, s.code, s.category, s.pricing_type AS master_pricing, s.fixed_price, st.name
              FROM case_services cs
              INNER JOIN services s ON s.id = cs.service_id
              LEFT JOIN service_translations st ON st.service_id = s.id AND st.locale = ?
@@ -263,7 +263,7 @@ final class CaseService
              WHERE cs.case_id = ?',
             [locale(), $case['id']]
         );
-        $case['history'] = $this->workflow->history((int) $case['id'], true);
+        $case['history'] = $this->workflow->history((int) $case['id'], true, true);
 
         return $case;
     }
@@ -287,25 +287,46 @@ final class CaseService
         $this->audit->log($staffId, 'case_updated', 'case', $id);
     }
 
-    public function syncServices(int $caseId, array $lines): void
+    public function syncServices(int $caseId, array $lines, ?int $staffId = null): void
     {
-        $case = $this->find($caseId);
-        $this->db->run('DELETE FROM case_services WHERE case_id = ?', [$caseId]);
+        $this->db->transaction(function () use ($caseId, $lines, $staffId): void {
+        $case = $this->db->fetch('SELECT * FROM cases WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [$caseId]);
+        if ($case === null) {
+            throw new \App\Core\HttpException(404, 'Case not found.');
+        }
+        $existing = [];
+        foreach ($this->db->fetchAll('SELECT service_id, unit_price FROM case_services WHERE case_id = ?', [$caseId]) as $item) {
+            $existing[(int) $item['service_id']] = $item['unit_price'];
+        }
+        $prepared = [];
         foreach ($lines as $line) {
             if (empty($line['service_id'])) {
                 continue;
             }
             $service = $this->catalog->service((int) $line['service_id']);
             if ($service === null) {
-                continue;
+                throw new \App\Core\ValidationException(['service_id' => 'A selected service is no longer available.']);
+            }
+            $quantity = \App\Helpers\Decimal::quantity($line['quantity'] ?? '1');
+            if (\App\Helpers\Money::cmp($quantity, '0') <= 0) {
+                throw new \App\Core\ValidationException(['quantity' => 'Service quantities must be greater than zero.']);
             }
             $price = ($service['pricing_type'] === 'fixed')
                 ? $this->catalog->priceFor($service, $case['country_id'] ? (int) $case['country_id'] : null)
-                : ($line['unit_price'] !== '' ? $line['unit_price'] : null);
+                : (($line['unit_price'] ?? '') !== '' ? \App\Helpers\Decimal::amount($line['unit_price'], 'unit_price') : ($existing[(int) $service['id']] ?? null));
+            if ($price !== null && \App\Helpers\Money::cmp($price, '0') < 0) {
+                throw new \App\Core\ValidationException(['unit_price' => 'Service prices cannot be negative.']);
+            }
+            $prepared[(int) $service['id']] = [$caseId, $service['id'], $quantity, $service['pricing_type'], $price, $service['currency']];
+        }
+        $this->db->run('DELETE FROM case_services WHERE case_id = ?', [$caseId]);
+        foreach ($prepared as $values) {
             $this->db->insert(
                 'INSERT INTO case_services (case_id, service_id, quantity, pricing_type, unit_price, currency) VALUES (?, ?, ?, ?, ?, ?)',
-                [$caseId, $service['id'], $line['quantity'] ?: 1, $service['pricing_type'], $price, $service['currency']]
+                $values
             );
         }
+        $this->audit->log($staffId, 'case_services_updated', 'case', $caseId, ['service_ids' => array_keys($prepared)]);
+        });
     }
 }

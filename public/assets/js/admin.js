@@ -222,8 +222,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tabRoot) {
         const buttons = [...tabRoot.querySelectorAll('[data-tab]')];
         const panels = [...document.querySelectorAll('[data-panel]')];
+        tabRoot.setAttribute('role', 'tablist');
+        tabRoot.setAttribute('aria-orientation', 'horizontal');
+        buttons.forEach((button) => {
+            const panel = panels.find((item) => item.dataset.panel === button.dataset.tab);
+            if (!panel) return;
+            button.id = button.id || 'case-tab-' + button.dataset.tab;
+            panel.id = panel.id || 'case-panel-' + button.dataset.tab;
+            button.setAttribute('role', 'tab');
+            button.setAttribute('aria-controls', panel.id);
+            panel.setAttribute('role', 'tabpanel');
+            panel.setAttribute('aria-labelledby', button.id);
+            panel.setAttribute('tabindex', '0');
+        });
         const activate = (name) => {
-            buttons.forEach((button) => button.classList.toggle('is-active', button.dataset.tab === name));
+            buttons.forEach((button) => {
+                const selected = button.dataset.tab === name;
+                button.classList.toggle('is-active', selected);
+                button.setAttribute('aria-selected', String(selected));
+                button.setAttribute('tabindex', selected ? '0' : '-1');
+            });
             panels.forEach((panel) => {
                 if (panel.dataset.panel === name) panel.removeAttribute('hidden');
                 else panel.setAttribute('hidden', '');
@@ -234,6 +252,19 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         buttons.forEach((button) => {
             button.addEventListener('click', () => activate(button.dataset.tab));
+            button.addEventListener('keydown', (event) => {
+                const index = buttons.indexOf(button);
+                let next;
+                if (event.key === 'ArrowRight') next = (index + 1) % buttons.length;
+                else if (event.key === 'ArrowLeft') next = (index - 1 + buttons.length) % buttons.length;
+                else if (event.key === 'Home') next = 0;
+                else if (event.key === 'End') next = buttons.length - 1;
+                else return;
+                event.preventDefault();
+                activate(buttons[next].dataset.tab);
+                buttons[next].focus();
+                buttons[next].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            });
         });
         document.querySelectorAll('[data-jump-tab]').forEach((link) => {
             link.addEventListener('click', (event) => {
@@ -246,8 +277,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
         const hash = (window.location.hash || '#overview').replace('#', '');
-        const initial = buttons.some((button) => button.dataset.tab === hash) ? hash : 'overview';
-        activate(initial);
+        const initial = buttons.some((button) => button.dataset.tab === hash) ? hash : buttons[0]?.dataset.tab;
+        if (initial) activate(initial);
         window.addEventListener('hashchange', () => {
             const next = (window.location.hash || '#overview').replace('#', '');
             if (buttons.some((button) => button.dataset.tab === next)) activate(next);

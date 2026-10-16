@@ -75,16 +75,16 @@ final class ProcessController extends Controller
             'notes' => 'nullable|max:4000',
         ]);
         $this->db->transaction(function () use ($id, $data, $request): void {
-        $this->requireCase((int) $id);
-        $processId = $this->db->insert(
-            'INSERT INTO mofa_processes (case_id, reference_no, submitted_at, expected_at, completed_at, status, notes, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [(int) $id, $data['reference_no'], $data['submitted_at'] ?: null, $data['expected_at'] ?: null, $data['completed_at'] ?: null, $data['status'], $data['notes'], $this->auth->id()]
-        );
-        $map = ['submitted' => 'submitted_to_mofa', 'processing' => 'mofa_processing', 'completed' => 'mofa_completed'];
-        if (isset($map[$data['status']]) && $request->input('update_case')) {
-            $this->workflow->change((int) $id, $map[$data['status']], $this->auth->id(), $data['notes'], true, true);
-        }
-        $this->audit->log($this->auth->id(), 'mofa_updated', 'case', (int) $id, ['process_id' => $processId, 'status' => $data['status']]);
+            $this->requireCase((int) $id);
+            $processId = $this->db->insert(
+                'INSERT INTO mofa_processes (case_id, reference_no, submitted_at, expected_at, completed_at, status, notes, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [(int) $id, $data['reference_no'], $data['submitted_at'] ?: null, $data['expected_at'] ?: null, $data['completed_at'] ?: null, $data['status'], $data['notes'], $this->auth->id()]
+            );
+            $map = ['submitted' => 'submitted_to_mofa', 'processing' => 'mofa_processing', 'completed' => 'mofa_completed'];
+            if (isset($map[$data['status']]) && $request->input('update_case')) {
+                $this->workflow->advance((int) $id, $map[$data['status']], $this->auth->id(), $data['notes'], true, true);
+            }
+            $this->audit->log($this->auth->id(), 'mofa_updated', 'case', (int) $id, ['process_id' => $processId, 'status' => $data['status']]);
         });
         flash('success', __('admin.saved'));
 
@@ -104,16 +104,16 @@ final class ProcessController extends Controller
             'notes' => 'nullable|max:4000',
         ]);
         $this->db->transaction(function () use ($id, $data, $request): void {
-        $this->requireCase((int) $id);
-        $processId = $this->db->insert(
-            'INSERT INTO embassy_processes (case_id, embassy_name, country_id, reference_no, submitted_at, expected_at, completed_at, status, notes, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [(int) $id, $data['embassy_name'], $data['country_id'] ?: null, $data['reference_no'], $data['submitted_at'] ?: null, $data['expected_at'] ?: null, $data['completed_at'] ?: null, $data['status'], $data['notes'], $this->auth->id()]
-        );
-        $map = ['submitted' => 'submitted_to_embassy', 'processing' => 'embassy_processing', 'completed' => 'embassy_completed'];
-        if (isset($map[$data['status']]) && $request->input('update_case')) {
-            $this->workflow->change((int) $id, $map[$data['status']], $this->auth->id(), $data['notes'], true, true);
-        }
-        $this->audit->log($this->auth->id(), 'embassy_updated', 'case', (int) $id, ['process_id' => $processId, 'status' => $data['status']]);
+            $this->requireCase((int) $id);
+            $processId = $this->db->insert(
+                'INSERT INTO embassy_processes (case_id, embassy_name, country_id, reference_no, submitted_at, expected_at, completed_at, status, notes, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [(int) $id, $data['embassy_name'], $data['country_id'] ?: null, $data['reference_no'], $data['submitted_at'] ?: null, $data['expected_at'] ?: null, $data['completed_at'] ?: null, $data['status'], $data['notes'], $this->auth->id()]
+            );
+            $map = ['submitted' => 'submitted_to_embassy', 'processing' => 'embassy_processing', 'completed' => 'embassy_completed'];
+            if (isset($map[$data['status']]) && $request->input('update_case')) {
+                $this->workflow->advance((int) $id, $map[$data['status']], $this->auth->id(), $data['notes'], true, true);
+            }
+            $this->audit->log($this->auth->id(), 'embassy_updated', 'case', (int) $id, ['process_id' => $processId, 'status' => $data['status']]);
         });
         flash('success', __('admin.saved'));
 

@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Core\Database;
 use App\Helpers\Money;
+use App\Helpers\Decimal;
 
 final class QuotationService
 {
@@ -24,14 +25,32 @@ final class QuotationService
 
     public function calculate(int $caseId, array $lines, string $discount, string $taxRate, string $additional, bool $allowDiscount): array
     {
-        $case = $this->db->fetch('SELECT * FROM cases WHERE id = ?', [$caseId]);
+        $case = $this->db->fetch('SELECT * FROM cases WHERE id = ? AND deleted_at IS NULL', [$caseId]);
+        if ($case === null) {
+            throw new \App\Core\HttpException(404, 'Case not found.');
+        }
+        $discount = Decimal::amount($discount, 'discount_amount');
+        $taxRate = Decimal::amount($taxRate, 'tax_rate', '100.00');
+        $additional = Decimal::amount($additional, 'additional_amount');
         $items = [];
         $subtotal = '0.00';
         foreach ($lines as $line) {
+            if (!is_array($line)) {
+                throw new \App\Core\ValidationException(['lines' => __('admin_validation.lines')]);
+            }
+            if (isset($line['description']) && !is_string($line['description'])) {
+                throw new \App\Core\ValidationException(['lines' => __('admin_validation.lines')]);
+            }
             if (empty($line['service_id']) && trim((string) ($line['description'] ?? '')) === '') {
                 continue;
             }
             $service = !empty($line['service_id']) ? $this->catalog->service((int) $line['service_id']) : null;
+            if (!empty($line['service_id']) && $service === null) {
+                throw new \App\Core\ValidationException(['lines' => __('admin_validation.service_missing')]);
+            }
+            if ($service !== null && $service['currency'] !== $case['currency']) {
+                throw new \App\Core\ValidationException(['lines' => __('admin_validation.service_currency')]);
+            }
             $pricing = $service['pricing_type'] ?? ($line['pricing_type'] ?? 'custom');
             if ($pricing === 'fixed' && $service !== null) {
                 $unit = $this->catalog->priceFor($service, $case['country_id'] ? (int) $case['country_id'] : null);
@@ -39,14 +58,12 @@ final class QuotationService
                     throw new \RuntimeException('Fixed price is missing for ' . $service['code']);
                 }
             } else {
-                $unit = Money::norm($line['unit_price'] ?? '0');
+                $unit = Decimal::amount($line['unit_price'] ?? '0', 'unit_price');
             }
-            $qty = Money::norm($line['quantity'] ?? '1');
-            if (Money::cmp($qty, '0') <= 0) {
-                continue;
-            }
-            $lineTotal = Money::mul($qty, $unit);
-            $subtotal = Money::add($subtotal, $lineTotal);
+            $unit = Decimal::amount($unit, 'unit_price');
+            $qty = Decimal::quantity($line['quantity'] ?? '1');
+            $lineTotal = Decimal::amount(Money::mul($qty, $unit), 'line_total');
+            $subtotal = Decimal::amount(Money::add($subtotal, $lineTotal), 'subtotal');
             $name = $line['description'] ?? '';
             if ($name === '' && $service !== null) {
                 $translated = $this->db->fetch('SELECT name FROM service_translations WHERE service_id = ? AND locale = \'en\'', [$service['id']]);
@@ -70,7 +87,7 @@ final class QuotationService
         }
         $taxable = Money::sub($subtotal, $discountAmount);
         $tax = Money::percent($taxable, $taxRate);
-        $total = Money::add(Money::add($taxable, $tax), Money::norm($additional));
+        $total = Decimal::amount(Money::add(Money::add($taxable, $tax), $additional), 'total');
 
         return [
             'items' => $items,
@@ -85,16 +102,23 @@ final class QuotationService
 
     public function save(int $caseId, array $payload, int $staffId, bool $issue, bool $allowDiscount): int
     {
+        if (!is_array($payload['lines'] ?? null)) {
+            throw new \App\Core\ValidationException(['lines' => __('admin_validation.lines')]);
+        }
         $totals = $this->calculate(
             $caseId,
             $payload['lines'],
-            (string) ($payload['discount_amount'] ?? '0'),
-            (string) ($payload['tax_rate'] ?? '0'),
-            (string) ($payload['additional_amount'] ?? '0'),
+            Decimal::amount($payload['discount_amount'] ?? '0', 'discount_amount'),
+            Decimal::amount($payload['tax_rate'] ?? '0', 'tax_rate', '100.00'),
+            Decimal::amount($payload['additional_amount'] ?? '0', 'additional_amount'),
             $allowDiscount
         );
         $case = $this->db->fetch('SELECT * FROM cases WHERE id = ?', [$caseId]);
         $days = (int) ($payload['validity_days'] ?? setting('quote_validity_days', 14));
+        $rawDays = $payload['validity_days'] ?? setting('quote_validity_days', 14);
+        if (!is_scalar($rawDays) || !preg_match('/^\d+$/D', (string) $rawDays) || $days < 1 || $days > 3650) {
+            throw new \App\Core\ValidationException(['validity_days' => __('admin_validation.days')]);
+        }
 
         return $this->db->transaction(function () use ($case, $totals, $payload, $staffId, $issue, $days): int {
             $existingId = (int) ($payload['quotation_id'] ?? 0);
@@ -164,7 +188,7 @@ final class QuotationService
             $this->snapshot($quotationId, $staffId);
             $this->audit->log($staffId, $issue ? 'quotation_issued' : 'quotation_saved', 'quotation', $quotationId, ['total' => $totals['total']]);
             if ($issue) {
-                $this->workflow->change((int) $case['id'], 'quotation_sent', $staffId, 'Quotation issued', true, false);
+                $this->workflow->advance((int) $case['id'], 'quotation_sent', $staffId, 'Quotation issued', true, false);
             }
 
             return $quotationId;
@@ -212,21 +236,21 @@ final class QuotationService
     public function accept(int $quotationId, int $userId, string $ip): int
     {
         $invoiceId = $this->db->transaction(function () use ($quotationId, $userId, $ip): int {
-        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
-        if ($quotation === null || !in_array($quotation['status'], ['sent', 'viewed'], true)) {
-            throw new \RuntimeException('This quotation cannot be accepted.');
-        }
-        if ($quotation['valid_until'] !== null && $quotation['valid_until'] < date('Y-m-d')) {
-            $this->db->run('UPDATE quotations SET status = ? WHERE id = ?', ['expired', $quotationId]);
-            return 0;
-        }
+            $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
+            if ($quotation === null || !in_array($quotation['status'], ['sent', 'viewed'], true)) {
+                throw new \RuntimeException('This quotation cannot be accepted.');
+            }
+            if ($quotation['valid_until'] !== null && $quotation['valid_until'] < date('Y-m-d')) {
+                $this->db->run('UPDATE quotations SET status = ? WHERE id = ?', ['expired', $quotationId]);
+                return 0;
+            }
             $this->db->run(
                 'UPDATE quotations SET status = ?, accepted_at = NOW(), accepted_ip = ?, accepted_by = ? WHERE id = ?',
                 ['accepted', $ip, $userId, $quotation['id']]
             );
             $invoiceId = $this->invoices->createFromQuotation((int) $quotation['id'], $userId);
             $this->db->run('UPDATE quotations SET status = ? WHERE id = ?', ['converted', $quotation['id']]);
-            $this->workflow->change((int) $quotation['case_id'], 'invoice_generated', $userId, 'Quotation accepted', true, false);
+            $this->workflow->advance((int) $quotation['case_id'], 'invoice_generated', $userId, 'Quotation accepted', true, false);
             $this->audit->log($userId, 'quotation_accepted', 'quotation', (int) $quotation['id'], ['ip' => $ip, 'invoice_id' => $invoiceId]);
 
             return $invoiceId;
@@ -241,15 +265,15 @@ final class QuotationService
     public function reject(int $quotationId, int $userId, string $reason): void
     {
         $this->db->transaction(function () use ($quotationId, $userId, $reason): void {
-        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
-        if ($quotation === null || !in_array($quotation['status'], ['sent', 'viewed'], true)) {
-            throw new \RuntimeException('This quotation cannot be rejected.');
-        }
-        $this->db->run(
-            'UPDATE quotations SET status = ?, rejected_at = NOW(), rejection_reason = ? WHERE id = ?',
-            ['rejected', $reason, $quotationId]
-        );
-        $this->audit->log($userId, 'quotation_rejected', 'quotation', $quotationId, ['reason' => $reason]);
+            $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
+            if ($quotation === null || !in_array($quotation['status'], ['sent', 'viewed'], true)) {
+                throw new \RuntimeException('This quotation cannot be rejected.');
+            }
+            $this->db->run(
+                'UPDATE quotations SET status = ?, rejected_at = NOW(), rejection_reason = ? WHERE id = ?',
+                ['rejected', $reason, $quotationId]
+            );
+            $this->audit->log($userId, 'quotation_rejected', 'quotation', $quotationId, ['reason' => $reason]);
         });
     }
 
@@ -262,7 +286,7 @@ final class QuotationService
     {
         $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ?', [$quotationId]);
         if ($quotation === null) {
-            throw new \RuntimeException('Quotation not found.');
+            throw new \App\Core\HttpException(404, 'Quotation not found.');
         }
         $items = $this->db->fetchAll('SELECT * FROM quotation_items WHERE quotation_id = ?', [$quotationId]);
         $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$quotation['customer_id']]);

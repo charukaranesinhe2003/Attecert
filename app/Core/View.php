@@ -14,9 +14,14 @@ final class View
         }
         extract($data, EXTR_SKIP);
         ob_start();
-        require $path;
+        try {
+            require $path;
 
-        return (string) ob_get_clean();
+            return (string) ob_get_clean();
+        } catch (\Throwable $exception) {
+            ob_end_clean();
+            throw $exception;
+        }
     }
 
     public static function page(string $view, array $data = [], string $layout = 'layouts/public'): string

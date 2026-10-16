@@ -9,6 +9,7 @@ use App\Core\HttpException;
 
 final class DocumentService
 {
+    private ?array $notificationDelivery = null;
     private const MIME = [
         'application/pdf' => 'pdf',
         'image/jpeg' => 'jpg',
@@ -26,6 +27,7 @@ final class DocumentService
 
     public function store(?int $caseId, ?int $quoteRequestId, array $file, string $category, ?string $subcategory, ?string $description, bool $visible, ?int $userId): int
     {
+        $this->notificationDelivery = null;
         if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
             throw new HttpException(422, __('documents.upload_failed'));
         }
@@ -143,6 +145,7 @@ final class DocumentService
 
     public function setVisibility(int $documentId, bool $visible, int $userId): bool
     {
+        $this->notificationDelivery = null;
         return $this->db->transaction(function () use ($documentId, $visible, $userId): bool {
             $document = $this->db->fetch('SELECT d.*, c.deleted_at AS case_deleted_at, cu.deleted_at AS customer_deleted_at FROM documents d INNER JOIN cases c ON c.id = d.case_id INNER JOIN customers cu ON cu.id = c.customer_id WHERE d.id = ? AND d.deleted_at IS NULL FOR UPDATE', [$documentId]);
             if ($document === null || $document['case_deleted_at'] !== null || $document['customer_deleted_at'] !== null) {
@@ -171,6 +174,11 @@ final class DocumentService
         });
     }
 
+    public function notificationDelivery(): ?array
+    {
+        return $this->notificationDelivery;
+    }
+
     private function notifyAvailable(int $caseId, int $documentId): void
     {
         $case = $this->db->fetch('SELECT c.number, cu.user_id, cu.email, cu.name FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id WHERE c.id = ? AND c.deleted_at IS NULL AND cu.deleted_at IS NULL', [$caseId]);
@@ -183,7 +191,7 @@ final class DocumentService
             __('notifications.document_body', ['number' => $case['number']]),
             '/portal/documents'
         );
-        $this->mail->send($case['email'], __('mail.document_subject', ['number' => $case['number']]), 'document-ready',
+        $this->notificationDelivery = $this->mail->send($case['email'], __('mail.document_subject', ['number' => $case['number']]), 'document-ready',
             ['name' => $case['name'], 'number' => $case['number'], 'link' => absolute_url('/portal/documents')], 'document', $documentId);
     }
 }

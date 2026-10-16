@@ -157,7 +157,7 @@ final class FinanceWorkflowTest extends DatabaseTestCase
         $controller->saveMofa($this->request('POST', ['status' => 'completed']), (string) $this->caseId);
         $after = $this->body($controller->mofa($this->request('GET', [], ['status' => 'active'])));
         self::assertStringNotContainsString($caseNumber, $after);
-        self::assertSame(2, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM audit_logs WHERE entity_type = ? AND entity_id = ? AND action = ?', ['case', $this->caseId, 'mofa_updated']));
+        self::assertSame(2, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM audit_logs WHERE entity = ? AND entity_id = ? AND action = ?', ['case', $this->caseId, 'mofa_updated']));
         self::assertGreaterThanOrEqual(2, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM mofa_processes WHERE case_id = ?', [$this->caseId]));
     }
 
@@ -165,12 +165,85 @@ final class FinanceWorkflowTest extends DatabaseTestCase
     {
         $validator = new Validator();
         self::assertSame(['paid_at' => '2024-02-29'], $validator->validate(['paid_at' => '2024-02-29'], ['paid_at' => 'required|date']));
-        foreach (['2026-02-29', '2026-13-01', '2026-1-01', 'tomorrow'] as $invalid) {
+        foreach (['2026-02-29', '2026-13-01', '2026-1-01', '0000-01-01', "2026-01\0-01", 'tomorrow'] as $invalid) {
             try {
                 $validator->validate(['paid_at' => $invalid], ['paid_at' => 'required|date']);
                 self::fail('Invalid calendar dates must fail validation.');
             } catch (ValidationException $exception) {
                 self::assertArrayHasKey('paid_at', $exception->errors());
+            }
+        }
+    }
+
+    public function testConcurrentPaymentsRecheckLockedBalanceBeforeRecording(): void
+    {
+        $invoiceId = app(InvoiceService::class)->createFromQuotation($this->quotation(), $this->adminId);
+        $results = $this->concurrentWorkers('SELECT id FROM invoices WHERE id = ? FOR UPDATE', $invoiceId, ['invoice_id' => $invoiceId]);
+        self::assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['ok'])));
+        self::assertSame(1, count(array_filter($results, static fn (array $result): bool => !$result['ok'] && str_contains($result['error'], 'exceeds'))));
+        self::assertSame('60.00', $this->db->fetchColumn('SELECT amount_paid FROM invoices WHERE id = ?', [$invoiceId]));
+        self::assertSame('60.00', $this->db->fetchColumn('SELECT SUM(amount) FROM payments WHERE invoice_id = ?', [$invoiceId]));
+        self::assertSame(1, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM payments WHERE invoice_id = ?', [$invoiceId]));
+    }
+
+    public function testConcurrentInvoiceConversionsReturnOneCompleteInvoice(): void
+    {
+        $quoteId = $this->quotation();
+        $results = $this->concurrentWorkers('SELECT id FROM quotations WHERE id = ? FOR UPDATE', $quoteId, ['operation' => 'invoice', 'quotation_id' => $quoteId]);
+        self::assertTrue($results[0]['ok']);
+        self::assertTrue($results[1]['ok']);
+        self::assertSame($results[0]['invoice_id'], $results[1]['invoice_id']);
+        self::assertSame(1, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM invoices WHERE quotation_id = ?', [$quoteId]));
+        self::assertSame(1, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM invoice_items WHERE invoice_id = ?', [$results[0]['invoice_id']]));
+    }
+
+    private function concurrentWorkers(string $lockSql, int $id, array $operation): array
+    {
+        if (!function_exists('proc_open')) {
+            self::markTestSkipped('Subprocess support is required for concurrent finance tests.');
+        }
+        // Make this setup visible to independent worker connections, still in the disposable database.
+        $this->db->pdo()->commit();
+        $this->db->pdo()->beginTransaction();
+        $this->db->fetch($lockSql, [$id]);
+        $workers = [];
+        try {
+            foreach ([1, 2] as $workerNumber) {
+                $pipes = [];
+                $process = proc_open([PHP_BINARY, __DIR__ . '/fixtures/finance_worker.php'], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
+                self::assertIsResource($process);
+                fwrite($pipes[0], json_encode($operation + ['database' => config('database'), 'app' => config('app'), 'mail' => config('mail'), 'staff_id' => $this->adminId]) . "\n");
+                fflush($pipes[0]);
+                self::assertSame("READY\n", fgets($pipes[1]));
+                $workers[] = [$process, $pipes];
+            }
+            foreach ($workers as [, $pipes]) {
+                fwrite($pipes[0], "GO\n");
+                fclose($pipes[0]);
+            }
+            // Both requests encounter the same parent lock before either can commit.
+            usleep(300000);
+            $this->db->pdo()->commit();
+            $results = [];
+            foreach ($workers as [$process, $pipes]) {
+                $results[] = json_decode(trim(stream_get_contents($pipes[1])), true, 512, JSON_THROW_ON_ERROR);
+                self::assertSame('', stream_get_contents($pipes[2]));
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                self::assertSame(0, proc_close($process));
+            }
+            $workers = [];
+            return $results;
+        } finally {
+            if ($this->db->pdo()->inTransaction()) {
+                $this->db->pdo()->rollBack();
+            }
+            foreach ($workers as [$process, $pipes]) {
+                proc_terminate($process);
+                foreach ($pipes as $pipe) {
+                    if (is_resource($pipe)) fclose($pipe);
+                }
+                proc_close($process);
             }
         }
     }

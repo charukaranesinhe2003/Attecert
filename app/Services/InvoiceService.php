@@ -22,60 +22,60 @@ final class InvoiceService
     public function createFromQuotation(int $quotationId, int $userId): int
     {
         return $this->db->transaction(function () use ($quotationId, $userId): int {
-        // Lock the parent even when no invoice exists, so concurrent conversions serialize.
-        $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
-        if ($quotation === null) {
-            throw new \RuntimeException('Quotation not found.');
-        }
-        $existing = $this->db->fetch(
-            'SELECT id FROM invoices WHERE quotation_id = ? AND status <> ?',
-            [$quotationId, 'cancelled']
-        );
-        if ($existing) {
-            return (int) $existing['id'];
-        }
-        $items = $this->db->fetchAll('SELECT * FROM quotation_items WHERE quotation_id = ?', [$quotationId]);
-        $days = (int) setting('invoice_due_days', 7);
-        $invoiceId = $this->db->insert(
-            'INSERT INTO invoices (number, case_id, customer_id, quotation_id, status, currency, subtotal, discount_amount, tax_amount, additional_amount, total, amount_paid, issued_at, due_at, notes, terms, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), ?, ?, ?, ?)',
-            [
-                $this->numbers->next('invoice', 'INV'),
-                $quotation['case_id'],
-                $quotation['customer_id'],
-                $quotationId,
-                'issued',
-                $quotation['currency'],
-                $quotation['subtotal'],
-                $quotation['discount_amount'],
-                $quotation['tax_amount'],
-                $quotation['additional_amount'],
-                $quotation['total'],
-                date('Y-m-d', strtotime('+' . $days . ' days')),
-                $quotation['notes'],
-                $quotation['terms'] ?: setting('invoice_terms', ''),
-                $userId,
-            ]
-        );
-        foreach ($items as $item) {
-            $this->db->insert(
-                'INSERT INTO invoice_items (invoice_id, service_id, description, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?, ?)',
-                [$invoiceId, $item['service_id'], $item['description'], $item['quantity'], $item['unit_price'], $item['line_total']]
+            // Lock the parent even when no invoice exists, so concurrent conversions serialize.
+            $quotation = $this->db->fetch('SELECT * FROM quotations WHERE id = ? FOR UPDATE', [$quotationId]);
+            if ($quotation === null) {
+                throw new \RuntimeException('Quotation not found.');
+            }
+            $existing = $this->db->fetch(
+                'SELECT id FROM invoices WHERE quotation_id = ? AND status <> ? FOR UPDATE',
+                [$quotationId, 'cancelled']
             );
-        }
-        $customer = $this->db->fetch('SELECT user_id FROM customers WHERE id = ?', [$quotation['customer_id']]);
-        $number = (string) $this->db->fetchColumn('SELECT number FROM invoices WHERE id = ?', [$invoiceId]);
-        if ($customer && $customer['user_id']) {
-            $this->notifications->notify(
-                (int) $customer['user_id'],
-                __('notifications.invoice_title'),
-                __('notifications.invoice_body', ['number' => $number]),
-                '/portal/invoices/' . $invoiceId
+            if ($existing) {
+                return (int) $existing['id'];
+            }
+            $items = $this->db->fetchAll('SELECT * FROM quotation_items WHERE quotation_id = ?', [$quotationId]);
+            $days = (int) setting('invoice_due_days', 7);
+            $invoiceId = $this->db->insert(
+                'INSERT INTO invoices (number, case_id, customer_id, quotation_id, status, currency, subtotal, discount_amount, tax_amount, additional_amount, total, amount_paid, issued_at, due_at, notes, terms, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), ?, ?, ?, ?)',
+                [
+                    $this->numbers->next('invoice', 'INV'),
+                    $quotation['case_id'],
+                    $quotation['customer_id'],
+                    $quotationId,
+                    'issued',
+                    $quotation['currency'],
+                    $quotation['subtotal'],
+                    $quotation['discount_amount'],
+                    $quotation['tax_amount'],
+                    $quotation['additional_amount'],
+                    $quotation['total'],
+                    date('Y-m-d', strtotime('+' . $days . ' days')),
+                    $quotation['notes'],
+                    $quotation['terms'] ?: setting('invoice_terms', ''),
+                    $userId,
+                ]
             );
-        }
-        $this->audit->log($userId, 'invoice_created', 'invoice', $invoiceId, ['quotation_id' => $quotationId, 'total' => $quotation['total']]);
+            foreach ($items as $item) {
+                $this->db->insert(
+                    'INSERT INTO invoice_items (invoice_id, service_id, description, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?, ?)',
+                    [$invoiceId, $item['service_id'], $item['description'], $item['quantity'], $item['unit_price'], $item['line_total']]
+                );
+            }
+            $customer = $this->db->fetch('SELECT user_id FROM customers WHERE id = ?', [$quotation['customer_id']]);
+            $number = (string) $this->db->fetchColumn('SELECT number FROM invoices WHERE id = ?', [$invoiceId]);
+            if ($customer && $customer['user_id']) {
+                $this->notifications->notify(
+                    (int) $customer['user_id'],
+                    __('notifications.invoice_title'),
+                    __('notifications.invoice_body', ['number' => $number]),
+                    '/portal/invoices/' . $invoiceId
+                );
+            }
+            $this->audit->log($userId, 'invoice_created', 'invoice', $invoiceId, ['quotation_id' => $quotationId, 'total' => $quotation['total']]);
 
-        return $invoiceId;
+            return $invoiceId;
         });
     }
 
@@ -109,22 +109,26 @@ final class InvoiceService
 
     public function cancel(int $invoiceId, int $staffId, string $reason): void
     {
+        $reason = trim($reason);
+        if ($reason === '' || mb_strlen($reason) > 255) {
+            throw new \App\Core\ValidationException(['reason' => __('admin_validation.cancellation_reason')]);
+        }
         $this->db->transaction(function () use ($invoiceId, $staffId, $reason): void {
-        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
-        if ($invoice === null) {
-            throw new \RuntimeException('Invoice not found.');
-        }
-        if (Money::cmp($invoice['amount_paid'], '0') > 0) {
-            throw new \RuntimeException('Record a refund before cancelling an invoice that has payments.');
-        }
-        if (in_array($invoice['status'], ['cancelled', 'paid'], true)) {
-            throw new \RuntimeException('This invoice cannot be cancelled.');
-        }
-        $this->db->run(
-            'UPDATE invoices SET status = ?, cancelled_at = NOW(), cancel_reason = ? WHERE id = ?',
-            ['cancelled', $reason, $invoiceId]
-        );
-        $this->audit->log($staffId, 'invoice_cancelled', 'invoice', $invoiceId, ['reason' => $reason]);
+            $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
+            if ($invoice === null) {
+            throw new \App\Core\HttpException(404, 'Invoice not found.');
+            }
+            if (Money::cmp($invoice['amount_paid'], '0') > 0) {
+                throw new \RuntimeException('Record a refund before cancelling an invoice that has payments.');
+            }
+            if (in_array($invoice['status'], ['cancelled', 'paid'], true)) {
+                throw new \RuntimeException('This invoice cannot be cancelled.');
+            }
+            $this->db->run(
+                'UPDATE invoices SET status = ?, cancelled_at = NOW(), cancel_reason = ? WHERE id = ?',
+                ['cancelled', $reason, $invoiceId]
+            );
+            $this->audit->log($staffId, 'invoice_cancelled', 'invoice', $invoiceId, ['reason' => $reason]);
         });
     }
 
@@ -132,7 +136,7 @@ final class InvoiceService
     {
         $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ?', [$invoiceId]);
         if ($invoice === null) {
-            throw new \RuntimeException('Invoice not found.');
+            throw new \App\Core\HttpException(404, 'Invoice not found.');
         }
         $items = $this->db->fetchAll('SELECT * FROM invoice_items WHERE invoice_id = ?', [$invoiceId]);
         $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$invoice['customer_id']]);

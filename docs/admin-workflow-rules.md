@@ -1,0 +1,15 @@
+# Case workflow rules
+
+The case status records the current overall stage. MOFA, embassy, translation, and other services are optional branches selected for the actual request; no mandatory sequence is imposed between them. Authorized staff can move directly to the stage that reflects the work, including completing a translation-only case without MOFA or embassy.
+
+Automatic quotation issue/acceptance, full payment, and process updates use `WorkflowService::advance()`. Under a case row lock, they advance only to a later configured `workflow_statuses.sort_order`. They cannot move a later case backwards or change a terminal case. A repeated or outdated event returns without another status-history entry, status audit, customer notification, or status email. The originating financial entry or process snapshot is still saved and audited.
+
+Authorized manual changes use `WorkflowService::change()`. Active forward stages can be skipped without forcing unrelated services. Moving backwards in the configured order, or changing any terminal case to a different status, requires both a nonblank reason and the explicit correction/reopening checkbox. This includes changing between two closed statuses. A successful reopening clears completed/cancelled timestamps. Inactive and unknown target statuses are rejected. Selecting the current status performs no writes.
+
+The case update, history entry, status audit, and optional notification/mail-log work share one transaction. The case row is read after acquiring its lock, so concurrent or late events recheck the latest status. The audit records the prior/new status, automatic/manual source, and whether the staff member confirmed a reversal.
+
+Next-action guidance prioritizes closed, ready, and recorded processing stages before older quotation/payment prompts. Outstanding invoices are checked across the available invoice records. Processing progress includes only selected service categories, existing process records, or an explicitly selected case stage. The latest MOFA/embassy snapshot determines that branch's progress; embassy completion does not imply an unrecorded MOFA completion. The translation stage uses the final ready/completed state because this project has no separate translation-completion record.
+
+Anonymous public tracking exposes only customer-visible timeline status code, translated label, badge tone, and timestamp (`notes` is returned as null for view compatibility). It exposes no actor names, actor identifiers, record identifiers, or free-text history notes, which can contain personal information. Authenticated customer and staff histories retain their existing visibility rules and data.
+
+`tests/WorkflowCompletionTest.php` exercises late quotation acceptance/payment/process records, terminal protection, idempotence, deliberate manual correction/reopening, optional processing branches, latest snapshots, anonymous timeline privacy, and rollback when the status audit fails. All database fixtures use a separately named disposable database and disable external email.

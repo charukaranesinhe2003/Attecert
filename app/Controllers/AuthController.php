@@ -25,16 +25,26 @@ final class AuthController extends Controller
     {
         $data = $this->validate($request, [
             'email' => 'required|email',
-            'password' => 'required|min:8|max:200',
         ]);
-        $result = $this->auth->attempt($data['email'], $data['password'], $request->ip());
+        $password = $request->input('password');
+        if (!is_string($password) || mb_strlen($password) < 8 || mb_strlen($password) > 200 || str_contains($password, "\0")) {
+            throw new \App\Core\ValidationException(['password' => __('auth.failed')], ['email' => $data['email']]);
+        }
+        $result = $this->auth->attempt($data['email'], $password, $request->ip());
         if (!$result['ok']) {
             throw new \App\Core\ValidationException(['email' => $result['error']], ['email' => $data['email']]);
         }
         $target = (string) ($_SESSION['_intended'] ?? $this->auth->homePath());
         unset($_SESSION['_intended']);
+        if ($this->auth->mustChangePassword()) {
+            return $this->redirect('/admin/password');
+        }
+        if (!preg_match('#^/(?!/)[^\\\\\x00-\x20]*$#D', $target)
+            || in_array($target, ['/login', '/logout', '/register', '/forgot-password'], true)) {
+            $target = $this->auth->homePath();
+        }
 
-        return Response::redirect(str_starts_with($target, '/') ? url($target) : $this->auth->homePath());
+        return $this->redirect($target);
     }
 
     public function registerForm(): Response

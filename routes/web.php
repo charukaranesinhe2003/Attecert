@@ -20,6 +20,7 @@ use App\Controllers\Admin\QuotationController as AdminQuotationController;
 use App\Controllers\Admin\QuoteRequestController as AdminQuoteRequestController;
 use App\Controllers\Admin\ReportController;
 use App\Controllers\Admin\SearchController;
+use App\Controllers\Admin\SecurityController;
 use App\Controllers\Admin\ServiceController as AdminServiceController;
 use App\Controllers\Admin\SettingsController;
 use App\Controllers\Admin\TranslationController;
@@ -106,6 +107,8 @@ return function (Router $router): void {
     $router->post('/portal/support', [ProfileController::class, 'sendSupport'], $customer);
 
     $staff = [AuthMiddleware::class, StaffMiddleware::class];
+    $router->get('/admin/password', [SecurityController::class, 'edit'], $staff);
+    $router->post('/admin/password', [SecurityController::class, 'update'], $staff);
     $router->get('/admin', [AdminDashboardController::class, 'index'], $staff);
     $router->get('/admin/search', [SearchController::class, 'index'], $staff);
     $router->get('/admin/processing', [ProcessController::class, 'index'], [...$staff, 'can:cases.edit']);

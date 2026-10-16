@@ -58,7 +58,7 @@ final class ReportController extends Controller
             $cells = array_map(static function (mixed $value): string {
                 $text = (string) $value;
 
-                return preg_match('/^[=+@\t\r\n]/', $text) ? "'" . $text : $text;
+                return preg_match('/^[=+@\t\r\n]/', $text) || (str_starts_with($text, '-') && !is_numeric($text)) ? "'" . $text : $text;
             }, $cells);
             fputcsv($stream, $cells);
         };

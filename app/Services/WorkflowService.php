@@ -50,22 +50,53 @@ final class WorkflowService
         return (int) $id;
     }
 
-    public function change(int $caseId, string $code, ?int $staffId, ?string $notes, bool $customerVisible, bool $notify = true): void
+    /** Manual updates can skip services; moving back or changing a closed case needs a reason and explicit confirmation. */
+    public function change(int $caseId, string $code, ?int $staffId, ?string $notes, bool $customerVisible, bool $notify = true, bool $confirmReopenOrBackward = false): bool
     {
-        $statusId = $this->idFor($code);
-        $case = $this->db->fetch(
-            'SELECT c.*, cu.user_id, cu.email, cu.name AS customer_name, t.name AS status_name
-             FROM cases c
-             INNER JOIN customers cu ON cu.id = c.customer_id
-             INNER JOIN workflow_statuses s ON s.id = ?
-             LEFT JOIN workflow_status_translations t ON t.status_id = s.id AND t.locale = \'en\'
-             WHERE c.id = ?',
-            [$statusId, $caseId]
-        );
-        if ($case === null) {
-            throw new \RuntimeException('Case not found.');
-        }
-        $this->db->transaction(function () use ($caseId, $statusId, $code, $staffId, $notes, $customerVisible): void {
+        return $this->transition($caseId, $code, $staffId, $notes, $customerVisible, $notify, false, $confirmReopenOrBackward);
+    }
+
+    /** Financial/process events may advance a case, but never undo later work or reopen a terminal case. */
+    public function advance(int $caseId, string $code, ?int $staffId, ?string $notes, bool $customerVisible, bool $notify = true): bool
+    {
+        return $this->transition($caseId, $code, $staffId, $notes, $customerVisible, $notify, true, false);
+    }
+
+    private function transition(int $caseId, string $code, ?int $staffId, ?string $notes, bool $customerVisible, bool $notify, bool $automatic, bool $confirmed): bool
+    {
+        return $this->db->transaction(function () use ($caseId, $code, $staffId, $notes, $customerVisible, $notify, $automatic, $confirmed): bool {
+            $case = $this->db->fetch(
+                'SELECT c.*, cu.user_id, cu.email, cu.name AS customer_name,
+                        s.code AS status_code, s.sort_order AS status_order, s.is_terminal
+                 FROM cases c
+                 INNER JOIN customers cu ON cu.id = c.customer_id
+                 INNER JOIN workflow_statuses s ON s.id = c.status_id
+                 WHERE c.id = ? AND c.deleted_at IS NULL FOR UPDATE',
+                [$caseId]
+            );
+            if ($case === null) {
+                throw new \App\Core\HttpException(404, 'Case not found.');
+            }
+            $target = $this->db->fetch(
+                'SELECT s.*, t.name FROM workflow_statuses s
+                 LEFT JOIN workflow_status_translations t ON t.status_id = s.id AND t.locale = \'en\'
+                 WHERE s.code = ? AND s.is_active = 1',
+                [$code]
+            );
+            if ($target === null) {
+                throw new \RuntimeException(__('admin_workflow.active_status_required'));
+            }
+            if ((int) $case['status_id'] === (int) $target['id']) {
+                return false;
+            }
+            $backward = (int) $target['sort_order'] < (int) $case['status_order'];
+            if ($automatic && ((bool) $case['is_terminal'] || (int) $target['sort_order'] <= (int) $case['status_order'])) {
+                return false;
+            }
+            if (!$automatic && ($backward || (bool) $case['is_terminal']) && (!$confirmed || trim((string) $notes) === '')) {
+                throw new \RuntimeException(__('admin_workflow.reversal_required'));
+            }
+            $statusId = (int) $target['id'];
             $this->db->run('UPDATE cases SET status_id = ?, completed_at = ?, cancelled_at = ? WHERE id = ?', [
                 $statusId,
                 $code === 'completed' ? date('Y-m-d H:i:s') : null,
@@ -76,42 +107,49 @@ final class WorkflowService
                 'INSERT INTO case_status_history (case_id, status_id, staff_id, notes, customer_visible) VALUES (?, ?, ?, ?, ?)',
                 [$caseId, $statusId, $staffId, $notes, $customerVisible ? 1 : 0]
             );
+            $this->audit->log($staffId, 'case_status_changed', 'case', $caseId, [
+                'from_status' => $case['status_code'], 'status' => $code,
+                'source' => $automatic ? 'automatic' : 'manual',
+                'confirmed_reversal' => !$automatic && ($backward || (bool) $case['is_terminal']),
+            ]);
+            if ($notify && $customerVisible && $case['user_id'] !== null) {
+                $label = (string) ($target['name'] ?? $code);
+                $this->notifications->notify(
+                    (int) $case['user_id'],
+                    __('notifications.status_title', ['status' => $label]),
+                    __('notifications.status_body', ['number' => $case['number'], 'status' => $label]),
+                    '/portal/applications/' . $caseId
+                );
+                $this->mail->send(
+                    $case['email'],
+                    __('mail.status_subject', ['number' => $case['number']]),
+                    'status-changed',
+                    [
+                        'name' => $case['customer_name'],
+                        'number' => $case['number'],
+                        'status' => $label,
+                        'notes' => (string) $notes,
+                        'link' => absolute_url('/portal/applications/' . $caseId),
+                    ],
+                    'case',
+                    $caseId
+                );
+            }
+            return true;
         });
-        $this->audit->log($staffId, 'case_status_changed', 'case', $caseId, ['status' => $code]);
-        if ($notify && $customerVisible && $case['user_id'] !== null) {
-            $label = (string) ($case['status_name'] ?? $code);
-            $this->notifications->notify(
-                (int) $case['user_id'],
-                __('notifications.status_title', ['status' => $label]),
-                __('notifications.status_body', ['number' => $case['number'], 'status' => $label]),
-                '/portal/applications/' . $caseId
-            );
-            $this->mail->send(
-                $case['email'],
-                __('mail.status_subject', ['number' => $case['number']]),
-                'status-changed',
-                [
-                    'name' => $case['customer_name'],
-                    'number' => $case['number'],
-                    'status' => $label,
-                    'notes' => $customerVisible ? (string) $notes : '',
-                    'link' => absolute_url('/portal/applications/' . $caseId),
-                ],
-                'case',
-                $caseId
-            );
-        }
     }
 
-    public function history(int $caseId, bool $publicOnly = false): array
+    public function history(int $caseId, bool $publicOnly = false, bool $anonymous = false): array
     {
-        $sql = 'SELECT h.*, s.code, s.badge_tone, t.name, u.name AS staff_name
+        // Anonymous tracking exposes status and time only. Customer-visible notes can contain personal data.
+        $columns = $anonymous ? 's.code, s.badge_tone, t.name, h.created_at, NULL AS notes' : 'h.*, s.code, s.badge_tone, t.name, u.name AS staff_name';
+        $sql = 'SELECT ' . $columns . '
                 FROM case_status_history h
                 INNER JOIN workflow_statuses s ON s.id = h.status_id
-                LEFT JOIN workflow_status_translations t ON t.status_id = s.id AND t.locale = ?
-                LEFT JOIN users u ON u.id = h.staff_id
+                LEFT JOIN workflow_status_translations t ON t.status_id = s.id AND t.locale = ?'
+                . ($anonymous ? '' : ' LEFT JOIN users u ON u.id = h.staff_id') . '
                 WHERE h.case_id = ?';
-        if ($publicOnly) {
+        if ($publicOnly || $anonymous) {
             $sql .= ' AND h.customer_visible = 1';
         }
         $sql .= ' ORDER BY h.created_at ASC, h.id ASC';

@@ -16,7 +16,8 @@
 <?php
 $auth = app(\App\Services\AuthService::class);
 $user = $auth->user() ?? [];
-$can = static fn (?string $permission): bool => $permission === null || $auth->can($permission);
+$passwordChangeRequired = $auth->mustChangePassword();
+$can = static fn (?string $permission): bool => $permission === null || (!$passwordChangeRequired && $auth->can($permission));
 $navItems = [
     ['cases', '/admin/cases', 'document', 'admin.cases', 'cases.view'],
     ['quotes', '/admin/quote-requests', 'mail', 'admin.quote_requests', 'quotes.manage'],
@@ -39,12 +40,13 @@ $navItems = [
     ['audit', '/admin/audit', 'eye', 'admin.audit', 'audit.view'],
     ['emails', '/admin/emails', 'send', 'admin.emails', 'quotations.send'],
     ['settings', '/admin/settings', 'settings', 'admin.settings', 'settings.manage'],
+    ['password', '/admin/password', 'settings', 'staff_security.title', null],
 ];
 $navGroups = [
     'operations' => ['cases', 'quotes', 'customers', 'contacts', 'documents', 'processing'],
     'finance' => ['quotations', 'invoices', 'payments', 'reports'],
     'website' => ['content', 'services', 'countries', 'articles', 'faqs', 'document_types', 'translations'],
-    'administration' => ['users', 'audit', 'emails', 'settings'],
+    'administration' => ['users', 'audit', 'emails', 'settings', 'password'],
 ];
 $quickActions = array_values(array_filter([
     $can('cases.create') && $can('cases.view') ? ['/admin/cases/create', __('admin.new_case')] : null,
@@ -63,7 +65,9 @@ $quickActions = array_values(array_filter([
         </a>
         <button class="btn admin-nav-close" type="button" data-portal-close><?= e(__('actions.close')) ?></button>
         <nav class="admin-nav">
-            <a class="<?= ($active ?? '') === 'dashboard' ? 'is-active' : '' ?>" href="<?= e(url('/admin')) ?>" <?= ($active ?? '') === 'dashboard' ? 'aria-current="page"' : '' ?>><?= icon('dashboard', 'icon icon-sm') ?><span><?= e(__('admin.dashboard')) ?></span></a>
+            <?php if (!$passwordChangeRequired): ?>
+                <a class="<?= ($active ?? '') === 'dashboard' ? 'is-active' : '' ?>" href="<?= e(url('/admin')) ?>" <?= ($active ?? '') === 'dashboard' ? 'aria-current="page"' : '' ?>><?= icon('dashboard', 'icon icon-sm') ?><span><?= e(__('admin.dashboard')) ?></span></a>
+            <?php endif; ?>
             <?php foreach ($navGroups as $group => $keys):
                 $items = array_filter($navItems, static fn (array $item): bool => in_array($item[0], $keys, true) && $can($item[4]));
                 if ($items === []) { continue; }
@@ -88,12 +92,14 @@ $quickActions = array_values(array_filter([
     <div class="portal-main admin-main">
         <header class="admin-topbar">
             <button class="btn portal-toggle" type="button" data-portal-nav aria-label="Menu" aria-controls="portal-nav" aria-expanded="false"><?= icon('menu') ?></button>
+            <?php if (!$passwordChangeRequired): ?>
             <form class="admin-search" action="<?= e(url('/admin/search')) ?>" method="get" data-admin-search role="search" data-search-loading="<?= e(__('admin_overview.search_loading')) ?>" data-search-error="<?= e(__('admin_overview.search_error')) ?>" data-search-empty="<?= e(__('admin.search_empty')) ?>">
                 <label class="sr-only" for="admin-search-q"><?= e(__('admin.search_everything')) ?></label>
                 <input id="admin-search-q" type="search" name="q" value="<?= e((string) ($q ?? '')) ?>" placeholder="<?= e(__('admin.search_everything')) ?>" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="admin-search-results" data-admin-search-input>
                 <div id="admin-search-results" class="admin-search-results" data-admin-search-results role="listbox" aria-label="<?= e(__('admin.search')) ?>" hidden></div>
                 <span class="sr-only" data-admin-search-status role="status" aria-live="polite"></span>
             </form>
+            <?php endif; ?>
             <?php if ($quickActions !== []): ?>
                 <div class="admin-quick" data-admin-quick>
                     <button class="btn btn-primary" type="button" data-admin-quick-toggle aria-expanded="false" aria-haspopup="true"><?= e(__('admin_overview.quick_actions')) ?></button>

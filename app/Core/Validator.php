@@ -18,6 +18,11 @@ final class Validator
             }
             $required = in_array('required', $ruleset, true);
             $nullable = in_array('nullable', $ruleset, true);
+            // Even an empty array is a malformed scalar field, rather than an absent value.
+            if (!is_scalar($value) && $value !== null) {
+                $errors[$field] = __('validation.in', ['field' => __('fields.' . $field)]);
+                continue;
+            }
             if (($value === null || $value === '' || $value === []) && !$required) {
                 $clean[$field] = ($nullable || $value === null) ? ($value === '' ? null : $value) : $value;
                 continue;
@@ -26,7 +31,7 @@ final class Validator
                 $errors[$field] = __('validation.required', ['field' => __('fields.' . $field)]);
                 continue;
             }
-            $numeric = in_array('numeric', $ruleset, true);
+            $numeric = in_array('numeric', $ruleset, true) || in_array('integer', $ruleset, true);
             foreach ($ruleset as $rule) {
                 if ($rule === 'required' || $rule === 'nullable') {
                     continue;
@@ -60,9 +65,23 @@ final class Validator
         if ($rule === 'numeric' && !is_numeric((string) $value)) {
             return __('validation.numeric', ['field' => $label]);
         }
+        if ($rule === 'integer' && !preg_match('/^-?\d+$/D', (string) $value)) {
+            return __('admin_validation.integer', ['field' => $label]);
+        }
+        if ($rule === 'currency' && !preg_match('/^[A-Z]{3}$/D', (string) $value)) {
+            return __('admin_validation.currency');
+        }
+        if ($rule === 'http_url') {
+            $parts = parse_url((string) $value);
+            if (!filter_var((string) $value, FILTER_VALIDATE_URL) || !is_array($parts)
+                || !in_array(strtolower((string) ($parts['scheme'] ?? '')), ['https', 'http'], true)
+                || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+                return __('admin_validation.url', ['field' => $label]);
+            }
+        }
         if ($rule === 'date') {
-            $date = is_string($value) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $value) : false;
-            if ($date === false || $date->format('Y-m-d') !== $value) {
+            if (!is_string($value) || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $value)
+                || !checkdate((int) substr($value, 5, 2), (int) substr($value, 8, 2), (int) substr($value, 0, 4))) {
                 return $label . ' must be a valid date in YYYY-MM-DD format.';
             }
         }

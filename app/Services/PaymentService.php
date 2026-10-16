@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Core\Database;
 use App\Helpers\Money;
+use App\Helpers\Decimal;
 
 final class PaymentService
 {
@@ -23,21 +24,24 @@ final class PaymentService
     public function record(int $invoiceId, array $data, int $staffId): int
     {
         return $this->db->transaction(function () use ($invoiceId, $data, $staffId): int {
-        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
-        if ($invoice === null || $invoice['status'] === 'cancelled') {
-            throw new \RuntimeException('Invoice cannot accept payments.');
-        }
-        $amount = Money::norm($data['amount']);
-        if (Money::cmp($amount, '0') <= 0) {
-            throw new \RuntimeException('Enter a payment amount greater than zero.');
-        }
-        $isRefund = ($data['method'] ?? '') === 'refund';
-        if (!$isRefund && Money::cmp($amount, $invoice['amount_due']) > 0) {
-            throw new \RuntimeException('Payment exceeds the amount due.');
-        }
-        if ($isRefund && Money::cmp($amount, $invoice['amount_paid']) > 0) {
-            throw new \RuntimeException('Refund exceeds the amount paid.');
-        }
+            $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
+            if ($invoice === null) {
+                throw new \App\Core\HttpException(404, 'Invoice not found.');
+            }
+            if ($invoice['status'] === 'cancelled') {
+                throw new \RuntimeException('Invoice cannot accept payments.');
+            }
+            $amount = Decimal::amount($data['amount'], 'amount', '9999999999.99', '0.01');
+            if (Money::cmp($amount, '0') <= 0) {
+                throw new \RuntimeException('Enter a payment amount greater than zero.');
+            }
+            $isRefund = ($data['method'] ?? '') === 'refund';
+            if (!$isRefund && Money::cmp($amount, $invoice['amount_due']) > 0) {
+                throw new \RuntimeException('Payment exceeds the amount due.');
+            }
+            if ($isRefund && Money::cmp($amount, $invoice['amount_paid']) > 0) {
+                throw new \RuntimeException('Refund exceeds the amount paid.');
+            }
 
             $paymentId = $this->db->insert(
                 'INSERT INTO payments (number, invoice_id, case_id, customer_id, amount, currency, method, status, paid_at, reference, receipt_reference, notes, recorded_by)
@@ -88,7 +92,7 @@ final class PaymentService
                 );
             }
             if ($status === 'paid') {
-                $this->workflow->change((int) $invoice['case_id'], 'payment_received', $staffId, 'Payment recorded', true, false);
+                $this->workflow->advance((int) $invoice['case_id'], 'payment_received', $staffId, 'Payment recorded', true, false);
             }
 
             return $paymentId;
@@ -98,6 +102,9 @@ final class PaymentService
     public function receiptPath(int $paymentId): string
     {
         $payment = $this->db->fetch('SELECT * FROM payments WHERE id = ?', [$paymentId]);
+        if ($payment === null) {
+            throw new \App\Core\HttpException(404, 'Payment not found.');
+        }
         $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ?', [$payment['invoice_id']]);
         $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$payment['customer_id']]);
 

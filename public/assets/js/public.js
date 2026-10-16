@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     });
-    document.querySelectorAll('.toast').forEach((toast) => {
+    document.querySelectorAll('.toast-success').forEach((toast) => {
         setTimeout(() => toast.remove(), 4200);
     });
     const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';

@@ -21,7 +21,10 @@ final class ContactController extends Controller
 
     public function index(Request $request): Response
     {
-        $source = (string) $request->query('source', 'all');
+        $source = is_string($request->query('source')) ? $request->query('source') : 'all';
+        $q = mb_substr(trim(is_string($request->query('q')) ? $request->query('q') : ''), 0, 190);
+        $status = is_string($request->query('status')) ? $request->query('status') : '';
+        $status = in_array($status, ['new', 'contacted', 'closed', 'spam'], true) ? $status : '';
         if (!in_array($source, ['all', 'guest', 'support'], true)) {
             $source = 'all';
         }
@@ -31,13 +34,23 @@ final class ContactController extends Controller
             $sql .= ' AND m.source = ?';
             $params[] = $source;
         }
-        $sql .= ' ORDER BY m.created_at DESC';
+        if ($status !== '') {
+            $sql .= ' AND m.status = ?';
+            $params[] = $status;
+        }
+        if ($q !== '') {
+            $sql .= ' AND (m.name LIKE ? OR m.email LIKE ? OR m.phone LIKE ? OR m.subject LIKE ? OR m.message LIKE ?)';
+            array_push($params, ...array_fill(0, 5, '%' . $q . '%'));
+        }
+        $sql .= ' ORDER BY m.created_at DESC, m.id DESC';
 
         return $this->view('admin/contacts/index', [
             'title' => __('admin.contacts'),
             'robots' => 'noindex',
             'active' => 'contacts',
             'source' => $source,
+            'q' => $q,
+            'status' => $status,
             'page' => $this->db->paginate($sql, $params, $this->pageQuery($request)),
         ], 'layouts/admin');
     }
@@ -57,6 +70,13 @@ final class ContactController extends Controller
         });
         flash('success', __('admin.saved'));
 
-        return $this->redirect('/admin/contacts');
+        $source = is_string($request->input('source')) ? $request->input('source') : 'all';
+        $status = is_string($request->input('return_status')) ? $request->input('return_status') : '';
+
+        return $this->redirect('/admin/contacts?' . http_build_query([
+            'source' => in_array($source, ['guest', 'support'], true) ? $source : 'all',
+            'q' => mb_substr(trim(is_string($request->input('q')) ? $request->input('q') : ''), 0, 190),
+            'status' => in_array($status, ['new', 'contacted', 'closed', 'spam'], true) ? $status : '',
+        ]));
     }
 }

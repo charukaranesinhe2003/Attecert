@@ -1,9 +1,15 @@
-<?php $auth = app(\App\Services\AuthService::class); ?>
+<?php
+$auth = app(\App\Services\AuthService::class);
+$hasLinkedLogin = !empty($customer['user_id']);
+$effectiveActive = (int) $customer['is_active'] === 1 && (!$hasLinkedLogin || (int) $customer['login_active'] === 1);
+$accessMismatch = $hasLinkedLogin && (int) $customer['is_active'] !== (int) $customer['login_active'];
+?>
 <?php foreach (errors() as $message): ?><p class="form-error"><?= e((string) $message) ?></p><?php endforeach; ?>
 <section class="card-block">
     <h2>Customer details</h2>
     <p><?= e($customer['email']) ?> · <?= e(customer_code($customer)) ?></p>
-    <p><?= status_badge((int) $customer['is_active'] === 1 ? 'Active' : 'Suspended', (int) $customer['is_active'] === 1 ? 'success' : 'warning') ?></p>
+    <p><?= status_badge($effectiveActive ? 'Active' : 'Suspended', $effectiveActive ? 'success' : 'warning') ?></p>
+    <?php if ($accessMismatch): ?><p class="form-error">Customer and linked login access currently differ. Enabling Account active also enables the linked login. Leave it unchecked to save with login access disabled.</p><?php endif; ?>
     <?php if ($canEdit): ?>
     <form class="stack" method="post" action="<?= e(url('/admin/customers/' . $customer['id'])) ?>" data-confirm="Save customer details and account access?">
         <?= csrf_field() ?>
@@ -15,7 +21,7 @@
         </div>
         <label><?= e(__('fields.notes')) ?><textarea name="notes" maxlength="4000"><?= e((string) old('notes', $customer['notes'])) ?></textarea></label>
         <input type="hidden" name="is_active" value="0">
-        <label class="consent"><input type="checkbox" name="is_active" value="1"<?= checked((int) old('is_active', $customer['is_active']) === 1) ?>> <?= e(__('admin.active')) ?></label>
+        <label class="consent"><input type="checkbox" name="is_active" value="1"<?= checked((int) old('is_active', $effectiveActive ? 1 : 0) === 1) ?>> <?= e(__('admin.active')) ?></label>
         <p>Suspending the account also disables its linked customer login.</p>
         <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
     </form>

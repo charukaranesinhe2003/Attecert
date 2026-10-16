@@ -24,14 +24,38 @@ final class UserController extends Controller
         parent::__construct($validator);
     }
 
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $raw = $request->query('q', '');
+        $q = is_string($raw) ? mb_substr(trim($raw), 0, 160) : '';
+        $status = in_array($request->query('status'), ['active', 'inactive'], true) ? $request->query('status') : '';
+        $roles = $this->staffRoles();
+        $role = in_array($request->query('role'), array_column($roles, 'code'), true) ? $request->query('role') : '';
+        $sql = 'SELECT u.id, u.name, u.email, u.is_active, GROUP_CONCAT(r.code ORDER BY r.code) AS role_codes FROM users u
+                LEFT JOIN user_roles ur ON ur.user_id = u.id LEFT JOIN roles r ON r.id = ur.role_id
+                WHERE u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM user_roles sr INNER JOIN roles rr ON rr.id = sr.role_id WHERE sr.user_id = u.id AND rr.code <> \'customer\')';
+        $params = [];
+        if ($q !== '') {
+            $sql .= ' AND (u.name LIKE ? OR u.email LIKE ?)';
+            $params = ['%' . $q . '%', '%' . $q . '%'];
+        }
+        if ($status !== '') {
+            $sql .= ' AND u.is_active = ?';
+            $params[] = $status === 'active' ? 1 : 0;
+        }
+        if ($role !== '') {
+            $sql .= ' AND EXISTS (SELECT 1 FROM user_roles fr INNER JOIN roles filter_role ON filter_role.id = fr.role_id WHERE fr.user_id = u.id AND filter_role.code = ?)';
+            $params[] = $role;
+        }
+        $sql .= ' GROUP BY u.id, u.name, u.email, u.is_active ORDER BY u.name, u.id';
+
         return $this->view('admin/users/index', [
             'title' => __('admin.users'),
             'robots' => 'noindex',
             'active' => 'users',
-            'users' => $this->db->fetchAll('SELECT u.id, u.name, u.email, u.is_active, GROUP_CONCAT(r.code) AS role_codes FROM users u LEFT JOIN user_roles ur ON ur.user_id = u.id LEFT JOIN roles r ON r.id = ur.role_id WHERE u.deleted_at IS NULL AND EXISTS (SELECT 1 FROM user_roles sr INNER JOIN roles rr ON rr.id = sr.role_id WHERE sr.user_id = u.id AND rr.code <> \'customer\') GROUP BY u.id, u.name, u.email, u.is_active ORDER BY u.name'),
-            'roles' => $this->staffRoles(),
+            'filters' => ['q' => $q, 'status' => $status, 'role' => $role],
+            'page' => $this->db->paginate($sql, $params, $this->pageQuery($request)),
+            'roles' => $roles,
             'canManagePrivileged' => $this->canManagePrivileged(),
             'currentUserId' => $this->auth->id(),
         ], 'layouts/admin');
@@ -65,7 +89,7 @@ final class UserController extends Controller
             $this->db->transaction(function () use ($data, $email, $role): void {
                 $id = $this->db->insert(
                     'INSERT INTO users (name, email, password_hash, email_verified_at, must_change_password) VALUES (?, ?, ?, NOW(), 1)',
-                    [$data['name'], $email, password_hash($data['password'], PASSWORD_DEFAULT)]
+                    [$data['name'], $email, \App\Helpers\Password::hash($data['password'])]
                 );
                 $this->db->run('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [$id, $role['id']]);
                 $this->audit->log($this->auth->id(), 'staff_created', 'user', $id, ['role' => $role['code']]);

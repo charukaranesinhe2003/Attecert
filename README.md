@@ -60,6 +60,8 @@ The seeder creates local accounts. Change them before any shared or production u
 
 The admin account is marked to change its password. The sample customer has case `ATT-2026-000001` for public tracking.
 
+Staff marked to change a password must complete `/admin/password` before using other authenticated features. Password changes and resets invalidate older sessions. Deploying the session fingerprint check requires existing users to sign in again; it does not change their stored passwords.
+
 ## Email
 
 SMTP is read only from the environment. Do not put mail passwords in source code.
@@ -75,6 +77,8 @@ MAIL_FROM_NAME=AtteCert
 ```
 
 Until `MAIL_HOST` is set, send actions stay honest: the message is saved under `storage/mail`, recorded in Email logs, and the screen says SMTP is not configured. Staff can resend after credentials are added.
+
+With SMTP configured, send actions queue durable messages. Apply migration `003_mail_outbox.sql` with `php cli/migrate.php`, then schedule `php cli/mail-worker.php --limit=20` every minute in the application directory. The worker sends outside business transactions and uses bounded retries. Review recipients before enabling it; old saved-only logs are not delivered automatically. For one authorized test, restrict delivery with `--id=<email-log-id>`. See [mail delivery operations](docs/mail-delivery.md) for ambiguous-delivery recovery and deployment details.
 
 ## Scheduled task
 
@@ -100,6 +104,7 @@ Back up three things together:
 
 - the MySQL database
 - `storage/documents`, `storage/invoices`, `storage/quotations`, and `storage/receipts`
+- private `storage/mail` snapshots, backed up with their matching database rows
 - the server `.env` file, stored outside the repository
 
 There is no in-app backup button. A button that only displayed success would not be a backup.
@@ -112,6 +117,21 @@ php cli/flow.php
 ```
 
 `cli/flow.php` runs the business path: quote request, case, fixed and custom prices, quotation PDF, customer acceptance, invoice, payment, MOFA file upload, authorised download, embassy completion, and audit records.
+
+`cli/flow.php` writes records and files to the configured application database and storage, including its fixture account. Do not run it against data you need to preserve.
+
+The regression suite has an opt-in integration mode that creates its own randomly named MySQL database (`attecert_test_...`) and isolated storage, disables SMTP, and cleans up its fixtures. The configured database credentials need permission to create and drop test databases. On PowerShell:
+
+```powershell
+$env:ATTECERT_INTEGRATION = '1'
+php vendor/phpunit/phpunit/phpunit
+```
+
+Without `ATTECERT_INTEGRATION=1`, database tests are skipped. The integration suite includes ownership and staff permissions, suspension, financial bounds and concurrent writes, quotation revisions, dashboard drilldowns, document release, catalog preservation, reports and PDF generation. Existing application records are never used as write fixtures.
+
+For local browser QA only, run `php tests/preview.php` with the same integration flag. It serves disposable seeded data on `http://127.0.0.1:8091`; no real email is sent. Create the `stop-preview` file at the exact path printed by the command to stop the server and clean up its test database/files. Do not expose this development preview publicly.
+
+See [the administration review](docs/admin-review.md), [first completion report](docs/admin-completion.md), [follow-up report](docs/admin-followup.md) and [scoped accessibility review](docs/admin-accessibility.md) for findings, implemented improvements, actual verification and deployment requirements.
 
 ## Production
 

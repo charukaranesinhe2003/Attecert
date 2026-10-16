@@ -7,27 +7,7 @@ $canFinance = $auth->can('invoices.create') || $auth->can('payments.view');
 $canDocs = $auth->can('documents.download') || $auth->can('documents.upload');
 $next = $nextStep ?? NextStep::forCase($case, $quotations, $invoices, $mofa, $embassy);
 $statusCode = (string) $case['status_code'];
-$progress = [
-    ['key' => 'received', 'label' => __('admin.step_received'), 'done' => true],
-    ['key' => 'documents', 'label' => __('admin.step_documents'), 'done' => !in_array($statusCode, ['new_request', 'under_review', 'awaiting_documents'], true)],
-    ['key' => 'quotation', 'label' => __('admin.step_quotation'), 'done' => $quotations !== [] && !in_array((string) ($quotations[0]['status'] ?? ''), ['draft', 'sent', 'viewed', 'rejected', 'expired'], true)],
-    ['key' => 'payment', 'label' => __('admin.step_payment'), 'done' => in_array((string) (($invoices[0]['status'] ?? '')), ['paid'], true) || in_array($statusCode, ['payment_received', 'verification', 'mofa_processing', 'submitted_to_mofa', 'mofa_completed', 'embassy_processing', 'submitted_to_embassy', 'embassy_completed', 'ready_for_collection', 'ready_for_delivery', 'completed'], true)],
-    ['key' => 'mofa', 'label' => __('admin.step_mofa'), 'done' => in_array(($mofa['status'] ?? ''), ['completed'], true) || in_array($statusCode, ['mofa_completed', 'embassy_processing', 'submitted_to_embassy', 'embassy_completed', 'ready_for_collection', 'ready_for_delivery', 'completed'], true)],
-    ['key' => 'embassy', 'label' => __('admin.step_embassy'), 'done' => in_array(($embassy['status'] ?? ''), ['completed'], true) || in_array($statusCode, ['embassy_completed', 'ready_for_collection', 'ready_for_delivery', 'completed'], true)],
-    ['key' => 'completed', 'label' => __('admin.step_completed'), 'done' => $statusCode === 'completed'],
-];
-$currentFound = false;
-foreach ($progress as $i => $step) {
-    if (!$step['done'] && !$currentFound) {
-        $progress[$i]['current'] = true;
-        $currentFound = true;
-    } else {
-        $progress[$i]['current'] = false;
-    }
-}
-if (!$currentFound && $statusCode === 'completed') {
-    $progress[count($progress) - 1]['current'] = true;
-}
+$progress = NextStep::progress($case, $quotations, $invoices, $mofa, $embassy);
 $docsByCategory = ['customer' => [], 'internal' => [], 'completed' => []];
 foreach ($documents as $doc) {
     $cat = (string) ($doc['category'] ?? 'internal');
@@ -95,16 +75,16 @@ foreach ($invoices as $invoice) {
         </div>
     </header>
 
-    <nav class="case-tabs" data-case-tabs aria-label="Case sections">
-        <button type="button" data-tab="overview" class="is-active"><?= e(__('admin.tab_overview')) ?></button>
-        <?php if ($canQuote || $auth->can('cases.edit')): ?><button type="button" data-tab="quote"><?= e(__('admin.tab_quote')) ?></button><?php endif; ?>
-        <?php if ($canDocs): ?><button type="button" data-tab="documents"><?= e(__('admin.tab_documents')) ?></button><?php endif; ?>
-        <button type="button" data-tab="processing"><?= e(__('admin.tab_processing')) ?></button>
-        <?php if ($canFinance): ?><button type="button" data-tab="finance"><?= e(__('admin.tab_finance')) ?></button><?php endif; ?>
-        <button type="button" data-tab="activity"><?= e(__('admin.tab_activity')) ?></button>
+    <nav class="case-tabs" data-case-tabs role="tablist" aria-label="<?= e(__('admin_workflow.workspace_label')) ?>">
+        <button type="button" data-tab="overview" class="is-active" role="tab" id="case-tab-overview" aria-controls="case-panel-overview" aria-selected="true" tabindex="0"><?= e(__('admin.tab_overview')) ?></button>
+        <?php if ($canQuote || $auth->can('cases.edit')): ?><button type="button" data-tab="quote" role="tab" id="case-tab-quote" aria-controls="case-panel-quote" aria-selected="false" tabindex="-1"><?= e(__('admin.tab_quote')) ?></button><?php endif; ?>
+        <?php if ($canDocs): ?><button type="button" data-tab="documents" role="tab" id="case-tab-documents" aria-controls="case-panel-documents" aria-selected="false" tabindex="-1"><?= e(__('admin.tab_documents')) ?></button><?php endif; ?>
+        <button type="button" data-tab="processing" role="tab" id="case-tab-processing" aria-controls="case-panel-processing" aria-selected="false" tabindex="-1"><?= e(__('admin.tab_processing')) ?></button>
+        <?php if ($canFinance): ?><button type="button" data-tab="finance" role="tab" id="case-tab-finance" aria-controls="case-panel-finance" aria-selected="false" tabindex="-1"><?= e(__('admin.tab_finance')) ?></button><?php endif; ?>
+        <button type="button" data-tab="activity" role="tab" id="case-tab-activity" aria-controls="case-panel-activity" aria-selected="false" tabindex="-1"><?= e(__('admin.tab_activity')) ?></button>
     </nav>
 
-    <section class="case-panel" data-panel="overview">
+    <section class="case-panel" data-panel="overview" role="tabpanel" id="case-panel-overview" aria-labelledby="case-tab-overview" tabindex="0">
         <div class="case-summary-grid">
             <section class="card-block">
                 <h2><?= e(__('admin.customers')) ?></h2>
@@ -127,10 +107,10 @@ foreach ($invoices as $invoice) {
             </section>
             <section class="card-block">
                 <h2><?= e(__('admin.current_progress')) ?></h2>
-                <ol class="progress-track">
+                <ol class="progress-track" aria-label="<?= e(__('admin_workflow.progress_label')) ?>">
                     <?php foreach ($progress as $step): ?>
-                        <li class="<?= $step['done'] ? 'is-done' : '' ?> <?= !empty($step['current']) ? 'is-current' : '' ?>">
-                            <i></i>
+                        <li class="<?= $step['done'] ? 'is-done' : '' ?> <?= !empty($step['current']) ? 'is-current' : '' ?>"<?= !empty($step['current']) ? ' aria-current="step"' : '' ?>>
+                            <i aria-hidden="true"></i>
                             <span><?= e($step['label']) ?></span>
                         </li>
                     <?php endforeach; ?>
@@ -162,7 +142,10 @@ foreach ($invoices as $invoice) {
                 <?php if ($auth->can('cases.status_update')): ?>
                 <form class="stack" method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/status')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
                     <label><?= e(__('fields.status')) ?><select name="status"><?php foreach ($statuses as $status): ?><option value="<?= e($status['code']) ?>" <?= selected($case['status_code'], $status['code']) ?>><?= e($status['name']) ?></option><?php endforeach; ?></select></label>
-                    <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="3"></textarea></label>
+                    <label for="case-status-reason"><?= e(__('admin_workflow.reason_label')) ?></label>
+                    <textarea id="case-status-reason" name="notes" rows="3" aria-describedby="case-status-correction-help"></textarea>
+                    <p id="case-status-correction-help" class="muted"><?= e(__('admin_workflow.correction_help')) ?></p>
+                    <label class="consent"><input type="checkbox" name="confirm_reversal" value="1" aria-describedby="case-status-correction-help"> <?= e(__('admin_workflow.confirm_correction')) ?></label>
                     <label class="consent"><input type="checkbox" name="customer_visible" value="1" checked> <?= e(__('admin.visible')) ?></label>
                     <button class="btn btn-primary" type="submit"><?= e(__('admin.update_status')) ?></button>
                 </form>
@@ -178,7 +161,7 @@ foreach ($invoices as $invoice) {
     </section>
 
     <?php if ($canQuote || $auth->can('cases.edit')): ?>
-    <section class="case-panel" data-panel="quote" hidden>
+    <section class="case-panel" data-panel="quote" role="tabpanel" id="case-panel-quote" aria-labelledby="case-tab-quote" tabindex="0" hidden>
         <?php if ($auth->can('cases.edit')): ?>
         <section class="card-block">
             <div class="card-head"><h2><?= e(__('admin.services')) ?></h2></div>
@@ -217,7 +200,7 @@ foreach ($invoices as $invoice) {
                         <div class="actions" style="margin-top:.35rem">
                             <a class="btn btn-ghost" href="<?= e(url('/admin/quotations/' . $latestQuote['id'])) ?>"><?= e(__('actions.view')) ?></a>
                             <a class="btn btn-ghost" href="<?= e(url('/admin/quotations/' . $latestQuote['id'] . '/pdf')) ?>"><?= e(__('actions.download')) ?></a>
-                            <?php if ($auth->can('quotations.send') && in_array($latestQuote['status'], ['draft', 'sent', 'viewed'], true)): ?>
+                            <?php if ($auth->can('quotations.send') && ($latestQuote['status'] !== 'draft' || $auth->can('quotations.approve')) && in_array($latestQuote['status'], ['draft', 'sent', 'viewed'], true)): ?>
                                 <form method="post" action="<?= e(url('/admin/quotations/' . $latestQuote['id'] . '/send')) ?>" data-busy="<?= e(__('admin.sending')) ?>"><?= csrf_field() ?><input type="hidden" name="return_case" value="<?= e((string) $case['id']) ?>"><button class="btn btn-primary" type="submit"><?= e(__('actions.email')) ?></button></form>
                             <?php endif; ?>
                             <?php if ($auth->can('invoices.create') && in_array($latestQuote['status'], ['accepted'], true)): ?>
@@ -279,7 +262,7 @@ foreach ($invoices as $invoice) {
                 <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="2"><?= e((string) $quoteValue('notes', $latestQuote['notes'] ?? '')) ?></textarea></label>
                 <label><?= e(__('fields.terms')) ?><textarea name="terms" rows="2"><?= e((string) $quoteValue('terms', $latestQuote['terms'] ?? setting('quote_terms', ''))) ?></textarea></label>
                 <?php if ($auth->can('quotations.approve')): ?><label class="consent"><input type="checkbox" name="issue" value="1" <?= (!$restoringQuote || old('issue', false)) ? 'checked' : '' ?>> <?= e(__('admin.issue_quote')) ?></label><?php endif; ?>
-                <?php if ($auth->can('quotations.send')): ?><label class="consent"><input type="checkbox" name="email" value="1" <?= $restoringQuote && old('email', false) ? 'checked' : '' ?>> <?= e(__('admin.email_customer')) ?></label><?php endif; ?>
+                <?php if ($auth->can('quotations.send') && $auth->can('quotations.approve')): ?><label class="consent"><input type="checkbox" name="email" value="1" <?= $restoringQuote && old('email', false) ? 'checked' : '' ?>> <?= e(__('admin.email_customer')) ?></label><?php endif; ?>
                 <div class="actions">
                     <button class="btn btn-primary" type="submit"><?= $latestQuote && $latestQuote['status'] !== 'draft' ? e(__('admin.create_revision')) : e(__('admin.generate_quote')) ?></button>
                 </div>
@@ -294,7 +277,7 @@ foreach ($invoices as $invoice) {
     <?php endif; ?>
 
     <?php if ($canDocs): ?>
-    <section class="case-panel" data-panel="documents" hidden>
+    <section class="case-panel" data-panel="documents" role="tabpanel" id="case-panel-documents" aria-labelledby="case-tab-documents" tabindex="0" hidden>
         <?php if ($auth->can('documents.upload')): ?>
         <section class="card-block">
             <div class="card-head"><h2><?= e(__('admin.upload_document')) ?></h2></div>
@@ -360,7 +343,7 @@ foreach ($invoices as $invoice) {
     </section>
     <?php endif; ?>
 
-    <section class="case-panel" data-panel="processing" hidden>
+    <section class="case-panel" data-panel="processing" role="tabpanel" id="case-panel-processing" aria-labelledby="case-tab-processing" tabindex="0" hidden>
         <div class="admin-grid">
             <section class="card-block">
                 <h2><?= e(__('admin.mofa')) ?></h2>
@@ -386,7 +369,7 @@ foreach ($invoices as $invoice) {
                         <label><?= e(__('fields.completed_at')) ?><input type="date" name="completed_at" value="<?= e((string) ($mofa['completed_at'] ?? '')) ?>"></label>
                     </div>
                     <label><?= e(__('fields.notes')) ?><textarea name="notes"><?= e((string) ($mofa['notes'] ?? '')) ?></textarea></label>
-                    <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin.update_case_status')) ?></label>
+                    <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin_workflow.advance_process')) ?></label>
                     <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
                 </form>
                 <?php endif; ?>
@@ -417,7 +400,7 @@ foreach ($invoices as $invoice) {
                         <label><?= e(__('fields.completed_at')) ?><input type="date" name="completed_at" value="<?= e((string) ($embassy['completed_at'] ?? '')) ?>"></label>
                     </div>
                     <label><?= e(__('fields.notes')) ?><textarea name="notes"><?= e((string) ($embassy['notes'] ?? '')) ?></textarea></label>
-                    <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin.update_case_status')) ?></label>
+                    <label class="consent"><input type="checkbox" name="update_case" value="1" checked> <?= e(__('admin_workflow.advance_process')) ?></label>
                     <button class="btn btn-primary" type="submit"><?= e(__('actions.save')) ?></button>
                 </form>
                 <?php endif; ?>
@@ -426,10 +409,11 @@ foreach ($invoices as $invoice) {
     </section>
 
     <?php if ($canFinance): ?>
-    <section class="case-panel" data-panel="finance" hidden>
+    <section class="case-panel" data-panel="finance" role="tabpanel" id="case-panel-finance" aria-labelledby="case-tab-finance" tabindex="0" hidden>
         <section class="card-block">
             <div class="card-head"><h2><?= e(__('admin.tab_finance')) ?></h2></div>
             <div class="finance-stack">
+                <?php if ($canQuote): ?>
                 <div class="finance-row">
                     <div>
                         <strong><?= e(__('admin.quotation')) ?></strong>
@@ -441,6 +425,8 @@ foreach ($invoices as $invoice) {
                     </div>
                     <strong><?= $latestQuote ? e(money($latestQuote['total'], $latestQuote['currency'])) : '—' ?></strong>
                 </div>
+                <?php endif; ?>
+                <?php if ($auth->can('invoices.create')): ?>
                 <div class="finance-row">
                     <div>
                         <strong><?= e(__('admin.invoices')) ?></strong>
@@ -459,6 +445,7 @@ foreach ($invoices as $invoice) {
                     </div>
                     <strong><?= e(money($outstanding, $case['currency'] ?? 'LKR')) ?></strong>
                 </div>
+                <?php endif; ?>
             </div>
             <?php if ($auth->can('payments.create') && $latestInvoice && !in_array($latestInvoice['status'], ['cancelled', 'paid'], true)): ?>
                 <form class="stack" style="margin-top:1rem" method="post" action="<?= e(url('/admin/invoices/' . $latestInvoice['id'] . '/payments')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
@@ -501,7 +488,7 @@ foreach ($invoices as $invoice) {
     </section>
     <?php endif; ?>
 
-    <section class="case-panel" data-panel="activity" hidden>
+    <section class="case-panel" data-panel="activity" role="tabpanel" id="case-panel-activity" aria-labelledby="case-tab-activity" tabindex="0" hidden>
         <section class="card-block">
             <div class="card-head"><h2><?= e(__('admin.tab_activity')) ?></h2></div>
             <?php if (($activity ?? []) === []): ?>

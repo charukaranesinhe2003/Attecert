@@ -202,6 +202,20 @@ function flash(string $key, ?string $message = null): ?string
     return $value;
 }
 
+function flash_mail_result(array $result, ?string $savedMessage = null): void
+{
+    if (in_array($result['status'], ['sent', 'queued'], true)) {
+        $delivery = $result['status'] === 'sent' ? __('admin.email_sent') : __('admin_feedback.queued');
+        flash('success', trim(($savedMessage ?? '') . ' ' . $delivery));
+
+        return;
+    }
+    if ($savedMessage !== null) {
+        flash('success', $savedMessage);
+    }
+    flash('error', (string) ($result['error'] ?? __('admin.smtp_missing')));
+}
+
 function setting(string $key, mixed $default = null): mixed
 {
     try {
@@ -261,13 +275,30 @@ function paginator(array $page, string $path): string
     }
     $query = $_GET;
     unset($query['page']);
-    $html = '<nav class="pagination" aria-label="Pagination">';
-    for ($i = 1; $i <= $page['pages']; $i++) {
+    $pages = (int) $page['pages'];
+    $currentPage = max(1, min($pages, (int) $page['page']));
+    $numbers = array_values(array_unique([1, ...range(max(1, $currentPage - 2), min($pages, $currentPage + 2)), $pages]));
+    sort($numbers);
+    $html = '<nav class="pagination" aria-label="' . e(__('admin_lists.pagination')) . '">';
+    if ($currentPage > 1) {
+        $query['page'] = $currentPage - 1;
+        $html .= '<a class="page-link" rel="prev" href="' . e(url($path . '?' . http_build_query($query))) . '">' . e(__('admin_lists.previous')) . '</a>';
+    }
+    $previous = 0;
+    foreach ($numbers as $i) {
+        if ($previous > 0 && $i > $previous + 1) {
+            $html .= '<span class="page-gap" aria-hidden="true">…</span>';
+        }
         $query['page'] = $i;
         $href = url($path . '?' . http_build_query($query));
-        $current = $i === (int) $page['page'];
+        $current = $i === $currentPage;
         $html .= '<a class="page-link' . ($current ? ' is-current' : '') . '" href="' . e($href) . '"'
             . ($current ? ' aria-current="page"' : '') . '>' . $i . '</a>';
+        $previous = $i;
+    }
+    if ($currentPage < $pages) {
+        $query['page'] = $currentPage + 1;
+        $html .= '<a class="page-link" rel="next" href="' . e(url($path . '?' . http_build_query($query))) . '">' . e(__('admin_lists.next')) . '</a>';
     }
     $html .= '</nav>';
 

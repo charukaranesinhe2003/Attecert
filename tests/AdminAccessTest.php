@@ -104,6 +104,25 @@ final class AdminAccessTest extends DatabaseTestCase
         $this->assertSame(1, (int) $this->db->fetchColumn('SELECT is_active FROM users WHERE id = ?', [$customer['user_id']]));
     }
 
+    public function testRoutineCustomerSaveDoesNotReactivateAnInactiveLinkedLogin(): void
+    {
+        $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$this->customerId]);
+        $this->db->run('UPDATE customers SET is_active = 1 WHERE id = ?', [$this->customerId]);
+        $this->db->run('UPDATE users SET is_active = 0 WHERE id = ?', [$customer['user_id']]);
+        $html = $this->body(app(CustomerController::class)->show($this->get(), (string) $this->customerId));
+        $document = new \DOMDocument();
+        $previous = libxml_use_internal_errors(true);
+        $document->loadHTML($html);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+        $xpath = new \DOMXPath($document);
+        $this->assertSame(0, $xpath->query('//input[@type="checkbox" and @name="is_active" and @checked]')->length);
+        $this->assertStringContainsString('Enabling Account active also enables the linked login.', $html);
+        app(CustomerController::class)->update($this->post(['name' => $customer['name'], 'phone' => '0700000000', 'is_active' => '0']), (string) $this->customerId);
+        $this->assertSame(0, (int) $this->db->fetchColumn('SELECT is_active FROM users WHERE id = ?', [$customer['user_id']]));
+        $this->assertSame('0700000000', $this->db->fetchColumn('SELECT phone FROM customers WHERE id = ?', [$this->customerId]));
+    }
+
     public function testCustomerDetailsHideUnauthorizedActionsAndFinance(): void
     {
         $this->signInAsRole('processing_staff');

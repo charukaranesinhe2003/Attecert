@@ -48,7 +48,14 @@ final class AuthService
             [$id]
         );
         if ($user === null) {
-            unset($_SESSION['user_id']);
+            unset($_SESSION['user_id'], $_SESSION['_password_fingerprint']);
+
+            return $this->user = null;
+        }
+        $fingerprint = $_SESSION['_password_fingerprint'] ?? '';
+        if (!is_string($fingerprint) || !hash_equals(hash('sha256', (string) $user['password_hash']), $fingerprint)) {
+            // Legacy sessions must sign in again; accepting missing versions would revive old credentials.
+            unset($_SESSION['user_id'], $_SESSION['_password_fingerprint']);
 
             return $this->user = null;
         }
@@ -118,7 +125,12 @@ final class AuthService
 
     public function homePath(): string
     {
-        return $this->isStaff() ? '/admin' : '/account';
+        return $this->isStaff() ? ($this->mustChangePassword() ? '/admin/password' : '/admin') : '/account';
+    }
+
+    public function mustChangePassword(): bool
+    {
+        return $this->isStaff() && (int) ($this->user()['must_change_password'] ?? 0) === 1;
     }
 
     public function attempt(string $email, string $password, string $ip): array
@@ -154,6 +166,7 @@ final class AuthService
         }
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int) $user['id'];
+        $_SESSION['_password_fingerprint'] = hash('sha256', (string) $user['password_hash']);
         if (!empty($user['locale'])) {
             $_SESSION['locale'] = $user['locale'];
         }
@@ -197,7 +210,7 @@ final class AuthService
             $verify = (string) setting('email_verification', '0') === '1';
             $userId = $this->db->insert(
                 'INSERT INTO users (name, email, phone, password_hash, locale, email_verified_at) VALUES (?, ?, ?, ?, ?, ?)',
-                [$name, $email, $phone !== '' ? $phone : null, password_hash($password, PASSWORD_DEFAULT), $locale, $verify ? null : date('Y-m-d H:i:s')]
+                [$name, $email, $phone !== '' ? $phone : null, \App\Helpers\Password::hash($password), $locale, $verify ? null : date('Y-m-d H:i:s')]
             );
             $roleId = (int) $this->db->fetchColumn('SELECT id FROM roles WHERE code = ?', ['customer']);
             $this->db->run('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [$userId, $roleId]);
@@ -226,16 +239,34 @@ final class AuthService
 
     public function resetPassword(string $token, string $password): bool
     {
-        $row = $this->tokenRow($token, 'reset');
-        if ($row === null) {
+        $candidate = $this->tokenRow($token, 'reset');
+        if ($candidate === null) {
             return false;
         }
-        $this->db->transaction(function () use ($row, $password): void {
-            $this->db->run('UPDATE users SET password_hash = ? WHERE email = ?', [password_hash($password, PASSWORD_DEFAULT), $row['email']]);
-            $this->db->run('UPDATE password_resets SET used_at = NOW() WHERE id = ?', [$row['id']]);
+        $userId = $this->db->transaction(function () use ($token, $password, $candidate): ?int {
+            // Match the account-then-token locking order used by signed-in password changes.
+            $user = $this->db->fetch('SELECT id FROM users WHERE email = ? AND deleted_at IS NULL FOR UPDATE', [$candidate['email']]);
+            if ($user === null) {
+                return null;
+            }
+            $row = $this->db->fetch(
+                'SELECT * FROM password_resets WHERE token_hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > NOW() ORDER BY id DESC LIMIT 1 FOR UPDATE',
+                [hash('sha256', $token), 'reset']
+            );
+            if ($row === null) {
+                return null;
+            }
+            $id = (int) $user['id'];
+            $this->db->run('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [\App\Helpers\Password::hash($password), $id]);
+            $this->db->run('UPDATE password_resets SET used_at = NOW() WHERE email = ? AND purpose = ? AND used_at IS NULL', [$row['email'], 'reset']);
+            $this->audit->log($id, 'password_reset', 'user', $id);
+
+            return $id;
         });
-        $user = $this->db->fetch('SELECT id FROM users WHERE email = ?', [$row['email']]);
-        $this->audit->log($user ? (int) $user['id'] : null, 'password_reset', 'user', $user ? (int) $user['id'] : null);
+        if ($userId === null) {
+            return false;
+        }
+        $this->loaded = false;
 
         return true;
     }
@@ -273,14 +304,35 @@ final class AuthService
 
     public function updatePassword(int $userId, string $current, string $next): bool
     {
-        $user = $this->db->fetch('SELECT password_hash FROM users WHERE id = ?', [$userId]);
-        if ($user === null || !password_verify($current, $user['password_hash'])) {
-            return false;
-        }
-        $this->db->run('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [password_hash($next, PASSWORD_DEFAULT), $userId]);
-        $this->audit->log($userId, 'password_changed', 'user', $userId);
+        $newHash = $this->db->transaction(function () use ($userId, $current, $next): ?string {
+            $user = $this->db->fetch('SELECT password_hash, email FROM users WHERE id = ? AND deleted_at IS NULL AND is_active = 1 FOR UPDATE', [$userId]);
+            if ($user === null || !password_verify($current, $user['password_hash'])) {
+                return null;
+            }
+            $hash = \App\Helpers\Password::hash($next);
+            $this->db->run('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [$hash, $userId]);
+            $this->db->run('UPDATE password_resets SET used_at = NOW() WHERE email = ? AND purpose = ? AND used_at IS NULL', [$user['email'], 'reset']);
+            $this->audit->log($userId, 'password_changed', 'user', $userId);
 
-        return true;
+            return $hash;
+        });
+        if ($newHash !== null) {
+            $this->loaded = false;
+            if ((int) ($_SESSION['user_id'] ?? 0) === $userId) {
+                $_SESSION['_password_fingerprint'] = hash('sha256', $newHash);
+            }
+        }
+
+        return $newHash !== null;
+    }
+
+    public function renewSession(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+        $_SESSION['_csrf'] = bin2hex(random_bytes(32));
+        unset($_SESSION['_intended'], $_SESSION['_errors'], $_SESSION['_old'], $_SESSION['_view_errors'], $_SESSION['_view_old']);
     }
 
     private function sendToken(string $email, string $purpose, string $path, string $template, string $subject): void

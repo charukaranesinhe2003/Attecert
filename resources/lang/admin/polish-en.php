@@ -1,0 +1,36 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'report_from' => 'From', 'report_to' => 'To',
+    'report_scope' => 'Cases, services, countries, customers and quotations use their creation date. Payments and refunds use payment date; turnaround uses completion date. Outstanding invoices show the current balance across all dates. Amounts are shown in their recorded currency.',
+    'case_status' => 'Case status', 'destination_country' => 'Destination country', 'selected_services' => 'Selected services',
+    'no_records' => 'No records in this date range.', 'receipts_refunds' => 'Receipts and refunds',
+    'refund_totals_help' => 'Refund entries reduce the net amount. Each currency is calculated separately.',
+    'no_receipts' => 'No receipts or refunds in this date range.', 'net' => 'Net: :amount',
+    'completion_average' => 'Average completion time: :value', 'completion_days' => ':days days',
+    'no_completed_cases' => 'No completed cases', 'new_customers' => 'New customers: :count',
+    'quotations_summary' => 'Quotations created: :total; currently accepted or converted: :accepted',
+    'outstanding_invoices' => 'Current outstanding invoices', 'no_outstanding' => 'No outstanding invoices.',
+    'invoice' => 'Invoice', 'status' => 'Status', 'due_date' => 'Due date', 'balance' => 'Balance',
+    'search' => 'Search', 'document_search' => 'File name or case number', 'case_id' => 'Case ID',
+    'category' => 'Category', 'all_categories' => 'All categories',
+    'category_customer' => 'Customer documents', 'category_internal' => 'Processing documents', 'category_completed' => 'Completed documents',
+    'visibility' => 'Visibility', 'all_visibility' => 'All visibility', 'private' => 'Private', 'visible' => 'Visible to customer',
+    'clear_filters' => 'Clear filters', 'document_count' => ':count matching documents.',
+    'document_help' => 'Release completed files after reviewing their content. Making a file private stops future portal downloads.',
+    'document' => 'Document', 'case' => 'Case', 'actions' => 'Actions', 'enquiry_attachment' => 'Enquiry attachment',
+    'review_release' => 'Review & release', 'make_private' => 'Make private',
+    'release_help' => 'The customer will be able to download this file. A portal notification is added and its email is queued when SMTP is configured. Delivery failures are reported and logged.',
+    'private_help' => 'The customer will no longer be able to download this file from the portal.',
+    'release_confirm' => 'I reviewed this file and confirm it is ready for the customer.',
+    'private_confirm' => 'I confirm this file should be private.', 'release' => 'Release to customer',
+    'archive_confirm' => 'Archive this document and remove portal access. The stored file will be retained.',
+    'refund_title' => 'Record refund', 'refund_available' => 'Available to refund: :amount',
+    'refund_confirm' => 'Record this refund?', 'form_errors' => 'Review the highlighted fields.',
+    'invoice_items' => 'Invoice items',
+    'invoice_status_issued' => 'Issued', 'invoice_status_sent' => 'Sent', 'invoice_status_partially_paid' => 'Partially paid',
+    'invoice_status_overdue' => 'Overdue', 'invoice_status_paid' => 'Paid', 'invoice_status_cancelled' => 'Cancelled',
+    'invoice_status_refunded' => 'Refunded',
+];

@@ -28,7 +28,7 @@ final class Kernel
             $response->send();
         } catch (ValidationException $exception) {
             $input = $exception->input();
-            unset($input['password'], $input['password_confirmation'], $input['_token']);
+            unset($input['password'], $input['current_password'], $input['password_confirmation'], $input['_token']);
             $_SESSION['_errors'] = $exception->errors();
             $_SESSION['_old'] = $input;
             if ($request->wantsJson()) {

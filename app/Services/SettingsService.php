@@ -36,6 +36,7 @@ final class SettingsService
 
     public function setMany(array $values): void
     {
+        $this->db->transaction(function () use ($values): void {
         foreach ($values as $key => $value) {
             $this->db->run(
                 'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
@@ -43,6 +44,7 @@ final class SettingsService
                 [$key, $value]
             );
         }
+        });
         $this->cache = null;
     }
 }

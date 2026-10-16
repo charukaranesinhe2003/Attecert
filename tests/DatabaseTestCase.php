@@ -79,7 +79,10 @@ abstract class DatabaseTestCase extends TestCase
         $this->customerId = (int) $this->db->fetchColumn('SELECT id FROM customers ORDER BY id LIMIT 1');
         $this->caseId = (int) $this->db->fetchColumn('SELECT id FROM cases ORDER BY id LIMIT 1');
         $_SESSION['user_id'] = $this->adminId;
+        $this->refreshSessionFingerprint();
         $this->db->pdo()->beginTransaction();
+        // Normal workflow tests use an established staff password; security tests opt in to the temporary-password flag.
+        $this->db->run('UPDATE users SET must_change_password = 0 WHERE id = ?', [$this->adminId]);
     }
 
     protected function tearDown(): void
@@ -91,11 +94,20 @@ abstract class DatabaseTestCase extends TestCase
         $_GET = [];
     }
 
-    protected function resetContainer(): void
+    protected function resetContainer(bool $refreshAuth = true): void
     {
         $container = new Container();
         $container->instance(Database::class, self::$fixture);
         $GLOBALS['app_container'] = $container;
+        if ($refreshAuth && !empty($_SESSION['user_id'])) {
+            $this->refreshSessionFingerprint();
+        }
+    }
+
+    protected function refreshSessionFingerprint(): void
+    {
+        $hash = self::$fixture->fetchColumn('SELECT password_hash FROM users WHERE id = ?', [(int) ($_SESSION['user_id'] ?? 0)]);
+        $_SESSION['_password_fingerprint'] = hash('sha256', (string) $hash);
     }
 
     protected function signInAsRole(string $role): int
