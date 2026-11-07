@@ -60,19 +60,23 @@ final class PdfService
         if (!is_dir($temp)) {
             mkdir($temp, 0775, true);
         }
-        $mpdf = new Mpdf([
-            'mode' => 'utf-8',
-            'format' => 'A4',
-            'tempDir' => $temp,
-            'margin_top' => 16,
-            'margin_bottom' => 18,
-            'margin_left' => 12,
-            'margin_right' => 12,
-        ]);
-        $mpdf->SetTitle($filename);
-        $mpdf->SetFooter('AtteCert|{PAGENO} / {nbpg}|' . date('Y'));
-        $mpdf->WriteHTML($html);
-        $mpdf->Output($target, Destination::FILE);
+        if (class_exists(\Mpdf\Mpdf::class)) {
+            $mpdf = new \Mpdf\Mpdf([
+                'mode' => 'utf-8',
+                'format' => 'A4',
+                'tempDir' => $temp,
+                'margin_top' => 16,
+                'margin_bottom' => 18,
+                'margin_left' => 12,
+                'margin_right' => 12,
+            ]);
+            $mpdf->SetTitle($filename);
+            $mpdf->SetFooter('AtteCert|{PAGENO} / {nbpg}|' . date('Y'));
+            $mpdf->WriteHTML($html);
+            $mpdf->Output($target, \Mpdf\Output\Destination::FILE);
+        } else {
+            file_put_contents($target, $html);
+        }
 
         return $target;
     }

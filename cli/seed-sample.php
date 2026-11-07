@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+require dirname(__DIR__) . '/bootstrap/autoload.php';
 require dirname(__DIR__) . '/database/seeders/DatabaseSeeder.php';
 require dirname(__DIR__) . '/database/seeders/SampleDataSeeder.php';
 require dirname(__DIR__) . '/bootstrap/app.php';

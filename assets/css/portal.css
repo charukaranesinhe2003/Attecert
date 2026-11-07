@@ -1,0 +1,33 @@
+.portal-body { background: var(--surface-main); min-height: 100vh; }
+.portal-shell { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+.portal-side { background: var(--brand-navy-deep); color: #d7e6f1; padding: 1.1rem 0.9rem; }
+.portal-side a { display: flex; gap: 0.5rem; align-items: center; color: #d7e6f1; text-decoration: none; padding: 0.55rem 0.7rem; border-radius: 10px; }
+.portal-side a.is-active, .portal-side a:hover { background: rgba(255,255,255,.08); color: white; }
+.portal-brand { display: flex; gap: 0.55rem; align-items: center; color: white; text-decoration: none; font-weight: 800; margin: 0 0.4rem 1rem; }
+.portal-brand img { width: 36px; height: 36px; }
+.portal-main { padding: 1.2rem; }
+.portal-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.metric-grid, .dash-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8rem; }
+.metric { background: white; border-radius: 16px; padding: 1rem; box-shadow: var(--shadow-sm); }
+.metric strong { display: block; font-size: 1.4rem; color: var(--brand-navy); }
+.table-wrap { overflow: auto; background: white; border-radius: 16px; box-shadow: var(--shadow-sm); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.75rem 0.85rem; border-bottom: 1px solid var(--border-light); vertical-align: top; }
+th { font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+.filters input, .filters select { width: auto; min-width: 160px; }
+.portal-toggle { display: none; }
+@media (max-width: 900px) {
+    .portal-shell { grid-template-columns: 1fr; }
+    .portal-side { display: none; }
+    .portal-side.is-open { display: block; }
+    .portal-toggle { display: inline-flex; }
+    .metric-grid, .dash-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 640px) {
+    .metric-grid, .dash-grid { grid-template-columns: 1fr; }
+    table, thead, tbody, tr, th, td { display: block; }
+    thead { display: none; }
+    tr { border-bottom: 8px solid var(--surface-main); }
+    td::before { content: attr(data-label); display: block; font-size: 0.75rem; color: var(--text-muted); font-weight: 800; }
+}

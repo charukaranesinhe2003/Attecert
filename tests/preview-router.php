@@ -13,7 +13,7 @@ $file = realpath($public . $uri);
 if ($uri !== '/' && $file !== false && str_starts_with($file, $public . DIRECTORY_SEPARATOR) && is_file($file)) {
     return false;
 }
-require dirname(__DIR__) . '/vendor/autoload.php';
+require dirname(__DIR__) . '/bootstrap/autoload.php';
 $kernel = require base_path('bootstrap/app.php');
 $property = new ReflectionProperty(\App\Core\Config::class, 'items');
 $items = $property->getValue();

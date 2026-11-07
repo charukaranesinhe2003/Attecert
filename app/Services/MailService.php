@@ -136,6 +136,16 @@ final class MailService
 
     private function deliver(array $claim): array
     {
+        if (!class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+            $payload = json_decode($claim['payload'], true, 512, JSON_THROW_ON_ERROR);
+            [$html, $attachment] = $this->loadPayload($payload);
+            $headers = "MIME-Version: 1.0\r\nContent-type: text/html; charset=UTF-8\r\nFrom: {$payload['from_name']} <{$payload['from_address']}>\r\nReply-To: {$payload['from_address']}\r\nX-Mailer: PHP/" . phpversion();
+            $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers);
+            $status = $sent ? 'sent' : 'failed';
+            $error = $sent ? null : 'Mail saved locally. Configure SMTP or PHP mail() for direct delivery.';
+            return $this->finish($claim, $status, $error);
+        }
+
         $transport = new class extends SMTP {
             public bool $dataStarted = false;
             public int $failureCode = 0;

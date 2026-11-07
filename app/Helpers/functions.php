@@ -158,7 +158,9 @@ function asset(string $path): string
 {
     $base = base_url_path();
     $relative = '/assets/' . ltrim($path, '/');
-    $full = base_path('public' . $relative);
+    $rootAsset = base_path('assets/' . ltrim($path, '/'));
+    $publicAsset = base_path('public' . $relative);
+    $full = is_file($rootAsset) ? $rootAsset : $publicAsset;
     $version = is_file($full) ? (string) filemtime($full) : '1';
 
     return $base . $relative . '?v=' . $version;

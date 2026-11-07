@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 // Optional local visual QA. Only serves a fresh test database; never the configured one.
-require dirname(__DIR__) . '/vendor/autoload.php';
+require dirname(__DIR__) . '/bootstrap/autoload.php';
 
 if (getenv('ATTECERT_INTEGRATION') !== '1' || PHP_SAPI !== 'cli') {
     exit("Run from CLI with ATTECERT_INTEGRATION=1.\n");

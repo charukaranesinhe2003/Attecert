@@ -8,7 +8,7 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+require dirname(__DIR__) . '/bootstrap/autoload.php';
 require dirname(__DIR__) . '/bootstrap/app.php';
 
 $options = getopt('', ['limit:', 'id:']);

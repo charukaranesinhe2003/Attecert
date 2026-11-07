@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+require dirname(__DIR__) . '/bootstrap/autoload.php';
 load_env(base_path('.env'));
 
 $host = env('DB_HOST', '127.0.0.1');
