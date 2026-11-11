@@ -61,7 +61,7 @@ final class InvoiceController extends Controller
     public function payments(): Response
     {
         $rows = $this->db->fetchAll(
-            'SELECT p.*, i.number AS invoice_number FROM payments p INNER JOIN invoices i ON i.id = p.invoice_id WHERE p.customer_id = ? ORDER BY p.paid_at DESC',
+            'SELECT p.*, i.number AS invoice_number FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id WHERE p.customer_id = ? ORDER BY p.paid_at DESC',
             [(int) $this->auth->customer()['id']]
         );
 

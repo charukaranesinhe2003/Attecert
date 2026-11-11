@@ -18,30 +18,6 @@ foreach ($documents as $doc) {
 }
 $latestQuote = $quotations[0] ?? null;
 $latestInvoice = $invoices[0] ?? null;
-$restoringQuote = (string) old('quotation_form', '') === (string) $case['id'];
-$quoteValue = static fn (string $field, mixed $default = ''): mixed => $restoringQuote ? old($field, $default) : $default;
-$builderLines = [];
-$customLines = [];
-foreach ($latestQuote ? ($quotationItems ?? []) : $case['services'] as $line) {
-    if (!empty($line['service_id'])) {
-        $builderLines[(int) $line['service_id']] = [
-            'selected' => 1,
-            'qty' => $line['quantity'],
-            'price' => $line['unit_price'],
-            'description' => $line['description'] ?? '',
-        ];
-    } else {
-        $customLines[] = $line;
-    }
-}
-if ($restoringQuote) {
-    $builderLines = (array) old('lines', []);
-    $customLines = (array) old('custom_lines', []);
-}
-$validityDays = (int) setting('quote_validity_days', 14);
-if ($latestQuote && $latestQuote['valid_until']) {
-    $validityDays = max(1, (int) round((strtotime($latestQuote['valid_until']) - strtotime(substr((string) ($latestQuote['issued_at'] ?: $latestQuote['created_at']), 0, 10))) / 86400));
-}
 $outstanding = 0.0;
 foreach ($invoices as $invoice) {
     if (!in_array($invoice['status'], ['cancelled', 'paid'], true)) {
@@ -61,6 +37,8 @@ foreach ($invoices as $invoice) {
                 </div>
             </div>
             <div class="actions">
+                <a class="btn btn-primary" href="<?= e(url('/admin/cases/' . $case['id'])) ?>">Case workflow</a>
+                <?php if ($auth->can('cases.edit')): ?><a class="btn btn-ghost" href="<?= e(url('/admin/tracking?case_id=' . $case['id'])) ?>">Manage tracking</a><?php endif; ?>
                 <?php if ($auth->can('cases.status_update')): ?><a class="btn btn-primary" href="#overview" data-jump-tab="overview"><?= e(__('admin.update_status')) ?></a><?php endif; ?>
                 <?php if ($auth->can('documents.upload')): ?><a class="btn btn-ghost" href="#documents" data-jump-tab="documents"><?= e(__('admin.upload_document')) ?></a><?php endif; ?>
                 <?php if ($auth->can('customers.view')): ?><a class="btn btn-ghost" href="<?= e(url('/admin/customers/' . $case['customer_id'])) ?>"><?= e(__('admin.customers')) ?></a><?php endif; ?>
@@ -127,7 +105,7 @@ foreach ($invoices as $invoice) {
                         <label><?= e(__('fields.document_title')) ?><input name="document_title" value="<?= e($case['document_title']) ?>" required></label>
                         <label><?= e(__('fields.country_id')) ?><select name="country_id"><option value=""></option><?php foreach ($countries as $country): ?><option value="<?= e((string) $country['id']) ?>" <?= selected($case['country_id'], $country['id']) ?>><?= e($country['name']) ?></option><?php endforeach; ?></select></label>
                         <label><?= e(__('fields.document_type_id')) ?><select name="document_type_id"><option value=""></option><?php foreach ($documentTypes as $type): ?><option value="<?= e((string) $type['id']) ?>" <?= selected($case['document_type_id'], $type['id']) ?>><?= e($type['name']) ?></option><?php endforeach; ?></select></label>
-                        <label><?= e(__('fields.assigned_to')) ?><select name="assigned_to"><option value=""></option><?php foreach ($staff as $person): ?><option value="<?= e((string) $person['id']) ?>" <?= selected($case['assigned_to'], $person['id']) ?>><?= e($person['name']) ?></option><?php endforeach; ?></select></label>
+                        <?php if ($auth->isAdmin()): ?><label><?= e(__('fields.assigned_to')) ?><select name="assigned_to"><option value=""><?= e(__('admin.unassigned')) ?></option><?php foreach ($staff as $person): ?><option value="<?= e((string) $person['id']) ?>" <?= selected($case['assigned_to'], $person['id']) ?>><?= e($person['name']) ?></option><?php endforeach; ?></select></label><?php endif; ?>
                     </div>
                     <label><?= e(__('fields.summary')) ?><textarea name="summary" rows="3"><?= e((string) $case['summary']) ?></textarea></label>
                     <label><?= e(__('fields.estimated_next')) ?><input name="estimated_next" value="<?= e((string) $case['estimated_next']) ?>"></label>
@@ -187,7 +165,7 @@ foreach ($invoices as $invoice) {
         </section>
         <?php endif; ?>
         <?php if ($canQuote): ?>
-        <section class="card-block" data-quote-builder>
+        <section class="card-block">
             <div class="card-head"><h2><?= e(__('admin.quotation')) ?></h2></div>
             <?php if ($latestQuote): ?>
                 <div class="finance-row" style="margin-bottom:1rem">
@@ -210,63 +188,9 @@ foreach ($invoices as $invoice) {
                     </div>
                 </div>
             <?php endif; ?>
-            <form method="post" action="<?= e(url('/admin/cases/' . $case['id'] . '/quotation')) ?>" data-busy="<?= e(__('admin.saving')) ?>"><?= csrf_field() ?>
-                <input type="hidden" name="quotation_form" value="<?= e((string) $case['id']) ?>">
-                <?php if ($latestQuote): ?>
-                    <input type="hidden" name="quotation_id" value="<?= e((string) $latestQuote['id']) ?>">
-                <?php endif; ?>
-                <div class="table-wrap"><table class="quote-table">
-                    <thead><tr><th><?= e(__('admin.services')) ?></th><th><?= e(__('fields.quantity')) ?></th><th><?= e(__('fields.price')) ?></th><th><?= e(__('fields.total')) ?></th></tr></thead>
-                    <tbody>
-                    <?php foreach ($services as $service):
-                        $line = $builderLines[(int) $service['id']] ?? [];
-                        $selected = !empty($line['selected']);
-                        $price = $line['price'] ?? ($service['pricing_type'] === 'fixed' ? $service['fixed_price'] : '');
-                    ?>
-                        <tr data-line>
-                            <td>
-                                <label class="consent">
-                                    <input data-selected type="checkbox" name="lines[<?= e((string) $service['id']) ?>][selected]" value="1" <?= $selected ? 'checked' : '' ?>>
-                                    <?= e($service['name']) ?>
-                                </label>
-                                <input type="hidden" name="lines[<?= e((string) $service['id']) ?>][description]" value="<?= e((string) (($line['description'] ?? '') ?: $service['name'])) ?>">
-                            </td>
-                            <td><input data-qty name="lines[<?= e((string) $service['id']) ?>][qty]" value="<?= e((string) ($line['qty'] ?? 1)) ?>"></td>
-                            <td><input data-price name="lines[<?= e((string) $service['id']) ?>][price]" value="<?= e((string) $price) ?>" <?= $service['pricing_type'] === 'fixed' ? 'readonly' : '' ?>></td>
-                            <td><strong data-line-total>0.00</strong></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    <?php foreach ($customLines as $index => $line): ?>
-                        <tr data-line>
-                            <td><input name="custom_lines[<?= (int) $index ?>][description]" aria-label="<?= e(__('fields.description')) ?>" value="<?= e((string) ($line['description'] ?? '')) ?>"></td>
-                            <td><input data-qty name="custom_lines[<?= (int) $index ?>][quantity]" aria-label="<?= e(__('fields.quantity')) ?>" value="<?= e((string) ($line['quantity'] ?? 1)) ?>"></td>
-                            <td><input data-price name="custom_lines[<?= (int) $index ?>][unit_price]" aria-label="<?= e(__('fields.price')) ?>" value="<?= e((string) ($line['unit_price'] ?? 0)) ?>"></td>
-                            <td><strong data-line-total>0.00</strong></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    <tr data-line>
-                        <td><input name="extra_description" placeholder="<?= e(__('fields.additional')) ?>" value="<?= e((string) $quoteValue('extra_description')) ?>"></td>
-                        <td><input data-qty name="extra_qty" value="<?= e((string) $quoteValue('extra_qty', 1)) ?>"></td>
-                        <td><input data-price name="extra_price" value="<?= e((string) $quoteValue('extra_price', 0)) ?>"></td>
-                        <td><strong data-line-total>0.00</strong></td>
-                    </tr>
-                    </tbody>
-                </table></div>
-                <div class="form-grid">
-                    <label><?= e(__('fields.discount')) ?><input name="discount_amount" value="<?= e((string) $quoteValue('discount_amount', $latestQuote['discount_amount'] ?? 0)) ?>"></label>
-                    <label><?= e(__('fields.tax_rate')) ?><input name="tax_rate" value="<?= e((string) $quoteValue('tax_rate', $latestQuote['tax_rate'] ?? 0)) ?>"></label>
-                    <label><?= e(__('fields.additional_amount')) ?><input name="additional_amount" value="<?= e((string) $quoteValue('additional_amount', $latestQuote['additional_amount'] ?? 0)) ?>"></label>
-                    <label><?= e(__('fields.validity_days')) ?><input name="validity_days" value="<?= e((string) $quoteValue('validity_days', $validityDays)) ?>"></label>
-                </div>
-                <div class="quote-total"><span><?= e(__('fields.total')) ?></span><strong data-total>0.00</strong></div>
-                <label><?= e(__('fields.notes')) ?><textarea name="notes" rows="2"><?= e((string) $quoteValue('notes', $latestQuote['notes'] ?? '')) ?></textarea></label>
-                <label><?= e(__('fields.terms')) ?><textarea name="terms" rows="2"><?= e((string) $quoteValue('terms', $latestQuote['terms'] ?? setting('quote_terms', ''))) ?></textarea></label>
-                <?php if ($auth->can('quotations.approve')): ?><label class="consent"><input type="checkbox" name="issue" value="1" <?= (!$restoringQuote || old('issue', false)) ? 'checked' : '' ?>> <?= e(__('admin.issue_quote')) ?></label><?php endif; ?>
-                <?php if ($auth->can('quotations.send') && $auth->can('quotations.approve')): ?><label class="consent"><input type="checkbox" name="email" value="1" <?= $restoringQuote && old('email', false) ? 'checked' : '' ?>> <?= e(__('admin.email_customer')) ?></label><?php endif; ?>
-                <div class="actions">
-                    <button class="btn btn-primary" type="submit"><?= $latestQuote && $latestQuote['status'] !== 'draft' ? e(__('admin.create_revision')) : e(__('admin.generate_quote')) ?></button>
-                </div>
-            </form>
+            <?php if ($auth->can('quotations.send')): ?>
+                <?= \App\Core\View::render('admin/quotations/upload-form', ['quotationCase' => $case]) ?>
+            <?php endif; ?>
             <?php if (count($quotations) > 1): ?>
                 <h3 style="margin-top:1rem"><?= e(__('admin.quote_history')) ?></h3>
                 <ul><?php foreach ($quotations as $quote): ?><li><a href="<?= e(url('/admin/quotations/' . $quote['id'])) ?>"><?= e($quote['number']) ?></a> · <?= e($quote['status']) ?> · <?= e(money($quote['total'], $quote['currency'])) ?></li><?php endforeach; ?></ul>
@@ -309,7 +233,7 @@ foreach ($invoices as $invoice) {
         </section>
         <?php endif; ?>
         <?php if ($auth->can('documents.download')): ?>
-        <p><a href="<?= e(url('/admin/documents?case_id=' . $case['id'])) ?>">Manage this case's documents and release completed files</a></p>
+        <p><a href="<?= e(url($auth->isAdmin() ? '/admin/documents?case_id=' . $case['id'] : '/admin/tracking?case_id=' . $case['id'])) ?>">Manage this case's documents and release completed files</a></p>
         <?php
         $groups = [
             'customer' => __('admin.doc_customer'),
@@ -479,7 +403,7 @@ foreach ($invoices as $invoice) {
                 <ul>
                     <?php foreach ($payments as $payment): ?>
                         <li><?= e($payment['number']) ?> · <?= e($payment['method']) ?> · <?= e(money($payment['amount'], $payment['currency'] ?? $case['currency'])) ?> · <?= e(format_datetime($payment['paid_at'] ?? $payment['created_at'])) ?>
-                            <a href="<?= e(url('/admin/payments/' . $payment['id'] . '/receipt')) ?>"><?= e(__('actions.download')) ?></a>
+                            <?php if (in_array($payment['status'], ['completed', 'refunded'], true)): ?><a href="<?= e(url('/admin/payments/' . $payment['id'] . '/receipt')) ?>"><?= e(__('actions.download')) ?></a><?php else: ?><a href="<?= e(url('/admin/cases/' . $case['id'] . '#finance')) ?>"><?= e(ucfirst($payment['status'])) ?></a><?php endif; ?>
                         </li>
                     <?php endforeach; ?>
                 </ul>

@@ -14,14 +14,17 @@ final class CaseService
         private WorkflowService $workflow,
         private AuditService $audit,
         private MailService $mail,
-        private CatalogService $catalog
+        private CatalogService $catalog,
+        private CaseAccessService $access,
+        private AuthService $auth
     ) {
     }
 
     public function create(array $data, array $lines, ?int $staffId): int
     {
         return $this->db->transaction(function () use ($data, $lines, $staffId): int {
-            $number = $this->numbers->next('case', 'ATT');
+            $this->access->validateAssignee(empty($data['assigned_to']) ? null : (int) $data['assigned_to']);
+            $number = $this->numbers->nextTracking();
             $statusId = $this->workflow->idFor('new_request');
             $caseId = $this->db->insert(
                 'INSERT INTO cases (number, customer_id, country_id, document_type_id, document_title, summary, status_id, assigned_to, source, quote_request_id, currency, created_by, customer_notes)
@@ -53,10 +56,11 @@ final class CaseService
                     [$caseId, $service['id'], $line['quantity'] ?? 1, $service['pricing_type'], $price, $service['currency']]
                 );
             }
-            $this->db->insert(
+            $historyId = $this->db->insert(
                 'INSERT INTO case_status_history (case_id, status_id, staff_id, notes, customer_visible) VALUES (?, ?, ?, ?, 1)',
                 [$caseId, $statusId, $staffId, 'Case opened']
             );
+            app(ProgressHistoryService::class)->record($caseId, 'New request', '', 'status', null, null, $historyId, 'status_updated');
             $this->audit->log($staffId, 'case_created', 'case', $caseId, ['number' => $number]);
 
             return $caseId;
@@ -65,85 +69,108 @@ final class CaseService
 
     public function createFromQuote(int $quoteRequestId, ?int $staffId): int
     {
-        $request = $this->db->fetch('SELECT * FROM quote_requests WHERE id = ?', [$quoteRequestId]);
-        if ($request === null) {
-            throw new \RuntimeException('Quote request not found.');
-        }
-        if ($request['converted_case_id'] !== null) {
-            return (int) $request['converted_case_id'];
-        }
-        $customerId = $this->ensureCustomer($request, $staffId);
-        $services = $this->db->fetchAll('SELECT service_id FROM quote_request_services WHERE quote_request_id = ?', [$quoteRequestId]);
-        $lines = array_map(static fn (array $row): array => ['service_id' => $row['service_id'], 'quantity' => $request['document_count'] ?: 1], $services);
-        $documentTitle = 'Document request';
-        if (!empty($request['document_type_id'])) {
-            $typeName = $this->db->fetchColumn(
-                'SELECT name FROM document_type_translations WHERE document_type_id = ? AND locale = \'en\'',
-                [(int) $request['document_type_id']]
-            );
-            if (is_string($typeName) && $typeName !== '') {
-                $documentTitle = $typeName;
+        return $this->db->transaction(function () use ($quoteRequestId, $staffId): int {
+            $request = $this->db->fetch('SELECT * FROM quote_requests WHERE id = ? FOR UPDATE', [$quoteRequestId]);
+            if ($request === null) {
+                throw new \RuntimeException('Quote request not found.');
             }
-        }
-        $caseId = $this->create([
-            'customer_id' => $customerId,
-            'country_id' => $request['country_id'],
-            'document_type_id' => $request['document_type_id'],
-            'document_title' => $documentTitle,
-            'summary' => $request['message'],
-            'source' => 'quote_request',
-            'quote_request_id' => $quoteRequestId,
-            'customer_notes' => $request['message'],
-        ], $lines, $staffId);
-        $this->db->run(
-            'UPDATE quote_requests SET status = ?, converted_case_id = ? WHERE id = ?',
-            ['converted', $caseId, $quoteRequestId]
-        );
-        $case = $this->find($caseId);
-        $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$customerId]);
-        if ($customer !== null) {
-            $this->mail->send(
-                $customer['email'],
-                __('mail.case_subject', ['number' => $case['number']]),
-                'case-opened',
-                ['name' => $customer['name'], 'number' => $case['number'], 'link' => absolute_url('/login')],
-                'case',
-                $caseId
+            if ($request['converted_case_id'] !== null) {
+                return (int) $request['converted_case_id'];
+            }
+            $customerId = $this->ensureCustomer($request, $staffId);
+            $services = $this->db->fetchAll('SELECT service_id FROM quote_request_services WHERE quote_request_id = ?', [$quoteRequestId]);
+            $lines = array_map(static fn (array $row): array => ['service_id' => $row['service_id'], 'quantity' => $request['document_count'] ?: 1], $services);
+            $documentTitle = 'Document request';
+            if (!empty($request['document_type_id'])) {
+                $typeName = $this->db->fetchColumn(
+                    'SELECT name FROM document_type_translations WHERE document_type_id = ? AND locale = \'en\'',
+                    [(int) $request['document_type_id']]
+                );
+                if (is_string($typeName) && $typeName !== '') {
+                    $documentTitle = $typeName;
+                }
+            }
+            $caseId = $this->create([
+                'customer_id' => $customerId,
+                'country_id' => $request['country_id'],
+                'document_type_id' => $request['document_type_id'],
+                'document_title' => $documentTitle,
+                'summary' => $request['message'],
+                'source' => 'quote_request',
+                'quote_request_id' => $quoteRequestId,
+                'assigned_to' => $request['assigned_to'],
+                'customer_notes' => $request['message'],
+            ], $lines, $staffId);
+            $this->db->run(
+                'UPDATE quote_requests SET status = ?, converted_case_id = ? WHERE id = ?',
+                ['converted', $caseId, $quoteRequestId]
             );
-        }
+            $this->db->run('UPDATE documents SET case_id = ? WHERE quote_request_id = ? AND case_id IS NULL', [$caseId, $quoteRequestId]);
+            $case = $this->db->fetch('SELECT number FROM cases WHERE id = ?', [$caseId]);
+            $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$customerId]);
+            if ($customer !== null) {
+                $this->mail->send(
+                    $customer['email'],
+                    __('mail.case_subject', ['number' => $case['number']]),
+                    'case-opened',
+                    ['name' => $customer['name'], 'number' => $case['number'], 'link' => absolute_url($customer['user_id'] === null ? '/track?number=' . rawurlencode($case['number']) : '/login'),
+                        'contact_only' => $customer['user_id'] === null],
+                    'case',
+                    $caseId
+                );
+            }
 
-        return $caseId;
+            return $caseId;
+        });
     }
 
     public function ensureCustomer(array $request, ?int $staffId): int
     {
         $email = mb_strtolower(trim((string) $request['email']));
-        $existing = $this->db->fetch('SELECT * FROM customers WHERE email = ? AND deleted_at IS NULL ORDER BY id LIMIT 1', [$email]);
-        if ($existing) {
-            return (int) $existing['id'];
-        }
-        $user = $this->db->fetch('SELECT id FROM users WHERE email = ? AND deleted_at IS NULL', [$email]);
-        if ($user === null) {
-            $userId = $this->db->insert(
-                'INSERT INTO users (name, email, phone, password_hash, must_change_password, email_verified_at) VALUES (?, ?, ?, ?, 1, NOW())',
+        return $this->db->transaction(function () use ($request, $staffId, $email): int {
+            $existing = $this->db->fetch('SELECT id FROM customers WHERE email = ? AND deleted_at IS NULL ORDER BY id LIMIT 1', [$email]);
+            if ($existing !== null) {
+                return (int) $existing['id'];
+            }
+
+            // Claim the unique email atomically, including reserved emails on deleted accounts.
+            // The duplicate branch leaves credentials, roles, and account access unchanged.
+            $statement = $this->db->run(
+                'INSERT INTO users (name, email, phone, password_hash, must_change_password, email_verified_at) VALUES (?, ?, ?, ?, 1, NULL)
+                 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',
                 [$request['name'], $email, $request['phone'] ?? null, password_hash(bin2hex(random_bytes(12)), PASSWORD_DEFAULT)]
             );
-            $roleId = (int) $this->db->fetchColumn('SELECT id FROM roles WHERE code = ?', ['customer']);
-            $this->db->run('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [$userId, $roleId]);
-            $this->mail->send($email, __('mail.welcome_subject'), 'welcome', [
-                'name' => $request['name'],
-                'link' => absolute_url('/forgot-password'),
-            ], 'user', $userId);
-        } else {
-            $userId = (int) $user['id'];
-        }
-        $customerId = $this->db->insert(
-            'INSERT INTO customers (user_id, name, email, phone, whatsapp) VALUES (?, ?, ?, ?, ?)',
-            [$userId, $request['name'], $email, $request['phone'] ?? null, $request['whatsapp'] ?? null]
-        );
-        $this->audit->log($staffId, 'customer_created', 'customer', $customerId);
+            $created = $statement->rowCount() === 1;
+            $userId = (int) $this->db->pdo()->lastInsertId();
+            $user = $this->db->fetch('SELECT id, deleted_at FROM users WHERE id = ? FOR UPDATE', [$userId]);
+            if ($user === null) {
+                throw new \RuntimeException('Unable to resolve the customer account.');
+            }
+            // A competing request may have created the contact while we waited for the email lock.
+            $existing = $this->db->fetch('SELECT id FROM customers WHERE email = ? AND deleted_at IS NULL ORDER BY id LIMIT 1 FOR UPDATE', [$email]);
+            if ($existing !== null) {
+                return (int) $existing['id'];
+            }
 
-        return $customerId;
+            $linkedUserId = $user['deleted_at'] === null ? $userId : null;
+            if ($linkedUserId !== null && $this->db->fetch('SELECT id FROM customers WHERE user_id = ? LIMIT 1 FOR UPDATE', [$linkedUserId]) !== null) {
+                $linkedUserId = null;
+            }
+            // Archived logins and customer profiles stay archived. A contact-only record can still receive case emails.
+            $customerId = $this->db->insert(
+                'INSERT INTO customers (user_id, name, email, phone, whatsapp) VALUES (?, ?, ?, ?, ?)',
+                [$linkedUserId, $request['name'], $email, $request['phone'] ?? null, $request['whatsapp'] ?? null]
+            );
+            if ($created) {
+                $roleId = (int) $this->db->fetchColumn('SELECT id FROM roles WHERE code = ?', ['customer']);
+                $this->db->run('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [$userId, $roleId]);
+                $this->mail->send($email, __('mail.welcome_subject'), 'welcome', [
+                    'name' => $request['name'], 'link' => absolute_url('/forgot-password'),
+                ], 'user', $userId);
+            }
+            $this->audit->log($staffId, 'customer_created', 'customer', $customerId, ['login_linked' => $linkedUserId !== null]);
+            return $customerId;
+        });
     }
 
     public function find(int $id): ?array
@@ -152,7 +179,7 @@ final class CaseService
             'SELECT c.*, cu.name AS customer_name, cu.email AS customer_email, cu.phone AS customer_phone,
                     cu.whatsapp AS customer_whatsapp, cu.user_id,
                     co.slug AS country_slug, ct.name AS country_name, dt.code AS document_code,
-                    dtt.name AS document_type_name, s.code AS status_code, s.badge_tone, st.name AS status_name,
+                    dtt.name AS document_type_name, s.code AS status_code, s.badge_tone, COALESCE(c.custom_status, st.name, s.code) AS status_name,
                     au.name AS assignee_name
              FROM cases c
              INNER JOIN customers cu ON cu.id = c.customer_id
@@ -163,7 +190,7 @@ final class CaseService
              INNER JOIN workflow_statuses s ON s.id = c.status_id
              LEFT JOIN workflow_status_translations st ON st.status_id = s.id AND st.locale = ?
              LEFT JOIN users au ON au.id = c.assigned_to
-             WHERE c.id = ? AND c.deleted_at IS NULL',
+             WHERE c.id = ? AND c.deleted_at IS NULL AND ' . $this->access->scope('c.id'),
             [locale(), locale(), locale(), $id]
         );
         if ($case === null) {
@@ -178,6 +205,7 @@ final class CaseService
             [locale(), $id]
         );
         $case['history'] = $this->workflow->history($id, false);
+        $case['progress_history'] = app(ProgressHistoryService::class)->forCase($id);
 
         return $case;
     }
@@ -196,7 +224,7 @@ final class CaseService
     public function search(array $filters, int $page): array
     {
         $sql = 'SELECT c.*, cu.name AS customer_name, cu.email AS customer_email, ct.name AS country_name,
-                       st.name AS status_name, s.code AS status_code, s.badge_tone
+                       COALESCE(c.custom_status, st.name, s.code) AS status_name, s.code AS status_code, s.badge_tone
                 FROM cases c
                 INNER JOIN customers cu ON cu.id = c.customer_id
                 LEFT JOIN country_translations ct ON ct.country_id = c.country_id AND ct.locale = ?
@@ -204,10 +232,11 @@ final class CaseService
                 LEFT JOIN workflow_status_translations st ON st.status_id = s.id AND st.locale = ?
                 WHERE c.deleted_at IS NULL';
         $params = [locale(), locale()];
+        $sql .= ' AND ' . $this->access->scope('c.id');
         if (($filters['q'] ?? '') !== '') {
-            $sql .= ' AND (c.number LIKE ? OR cu.name LIKE ? OR cu.email LIKE ? OR cu.phone LIKE ? OR c.document_title LIKE ?)';
+            $sql .= ' AND (c.number LIKE ? OR cu.name LIKE ? OR cu.email LIKE ? OR cu.phone LIKE ? OR c.document_title LIKE ? OR c.custom_status LIKE ?)';
             $like = '%' . $filters['q'] . '%';
-            array_push($params, $like, $like, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like, $like);
         }
         if (($filters['status'] ?? '') === 'active') {
             $sql .= ' AND s.is_terminal = 0';
@@ -230,7 +259,7 @@ final class CaseService
     public function forCustomerList(int $customerId): array
     {
         return $this->db->fetchAll(
-            'SELECT c.*, ct.name AS country_name, st.name AS status_name, s.code AS status_code, s.badge_tone
+            'SELECT c.*, ct.name AS country_name, COALESCE(c.custom_status, st.name, s.code) AS status_name, s.code AS status_code, s.badge_tone
              FROM cases c
              LEFT JOIN country_translations ct ON ct.country_id = c.country_id AND ct.locale = ?
              INNER JOIN workflow_statuses s ON s.id = c.status_id
@@ -245,8 +274,11 @@ final class CaseService
     {
         $number = strtoupper(trim($number));
         $case = $this->db->fetch(
-            'SELECT c.id, c.number, c.document_title, c.estimated_next, c.updated_at, ct.name AS country_name,
-                    st.name AS status_name, s.code AS status_code, s.badge_tone
+            'SELECT c.id, c.number, c.document_title, c.estimated_next, c.created_at, c.updated_at,
+                    c.tracking_expected_on, c.tracking_message, ct.name AS country_name,
+                    COALESCE(c.custom_status, st.name, s.code) AS status_name,
+                    CASE WHEN c.custom_status IS NULL THEN s.code ELSE \'custom\' END AS status_code,
+                    CASE WHEN c.custom_status IS NULL THEN s.badge_tone ELSE \'neutral\' END AS badge_tone
              FROM cases c
              LEFT JOIN country_translations ct ON ct.country_id = c.country_id AND ct.locale = ?
              INNER JOIN workflow_statuses s ON s.id = c.status_id
@@ -264,27 +296,42 @@ final class CaseService
             [locale(), $case['id']]
         );
         $case['history'] = $this->workflow->history((int) $case['id'], true, true);
+        $case['steps'] = $this->db->fetchAll('SELECT title, public_description, step_date, state, sort_order
+            FROM case_tracking_steps WHERE case_id = ? ORDER BY sort_order, id', [(int) $case['id']]);
+        $case['progress_history'] = app(ProgressHistoryService::class)->forCase((int) $case['id']);
 
         return $case;
     }
 
     public function updateDetails(int $id, array $data, int $staffId): void
     {
-        $this->db->run(
-            'UPDATE cases SET country_id = ?, document_type_id = ?, document_title = ?, summary = ?, assigned_to = ?, estimated_next = ?, internal_notes = ?, customer_notes = ? WHERE id = ?',
-            [
-                $data['country_id'] ?: null,
-                $data['document_type_id'] ?: null,
-                $data['document_title'],
-                $data['summary'] ?? null,
-                $data['assigned_to'] ?: null,
-                $data['estimated_next'] ?? null,
-                $data['internal_notes'] ?? null,
-                $data['customer_notes'] ?? null,
-                $id,
-            ]
-        );
-        $this->audit->log($staffId, 'case_updated', 'case', $id);
+        $this->db->transaction(function () use ($id, $data, $staffId): void {
+            $case = $this->access->requireCase($id, true);
+            $assignee = empty($data['assigned_to']) ? null : (int) $data['assigned_to'];
+            if ($this->auth->isRestrictedStaff()) {
+                if (array_key_exists('assigned_to', $data) && $assignee !== (int) $case['assigned_to']) {
+                    throw new \App\Core\HttpException(403, 'Only administrators can reassign cases.');
+                }
+                $assignee = (int) $case['assigned_to'];
+            } else {
+                $this->access->validateAssignee($assignee);
+            }
+            $this->db->run(
+                'UPDATE cases SET country_id = ?, document_type_id = ?, document_title = ?, summary = ?, assigned_to = ?, estimated_next = ?, internal_notes = ?, customer_notes = ? WHERE id = ?',
+                [
+                    $data['country_id'] ?: null,
+                    $data['document_type_id'] ?: null,
+                    $data['document_title'],
+                    $data['summary'] ?? null,
+                    $assignee,
+                    $data['estimated_next'] ?? null,
+                    $data['internal_notes'] ?? null,
+                    $data['customer_notes'] ?? null,
+                    $id,
+                ]
+            );
+            $this->audit->log($staffId, 'case_updated', 'case', $id);
+        });
     }
 
     public function syncServices(int $caseId, array $lines, ?int $staffId = null): void

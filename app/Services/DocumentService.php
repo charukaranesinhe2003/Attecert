@@ -89,6 +89,27 @@ final class DocumentService
         );
     }
 
+    public function optionalUpload(int $caseId, ?array $file, string $subcategory, string $description, int $userId, bool $pdfOnly = false): ?int
+    {
+        if ($file === null || $file === [] || ($file['error'] ?? null) === UPLOAD_ERR_NO_FILE) { return null; }
+        $path = $file['tmp_name'] ?? null;
+        if (($file['error'] ?? null) !== UPLOAD_ERR_OK || !is_string($path) || !is_file($path)
+            || (PHP_SAPI !== 'cli' && !is_uploaded_file($path))) {
+            throw new \App\Core\ValidationException(['document' => 'The document could not be uploaded. Please choose the file again.']);
+        }
+        $file['size'] = filesize($path);
+        $file['name'] = basename(str_replace('\\', '/', (string) ($file['name'] ?? '')));
+        if ($file['name'] === '' || mb_strlen($file['name']) > 255) {
+            throw new \App\Core\ValidationException(['document' => 'Use a document filename of up to 255 characters.']);
+        }
+        if ($pdfOnly && (strtolower(pathinfo($file['name'], PATHINFO_EXTENSION)) !== 'pdf'
+            || (new \finfo(FILEINFO_MIME_TYPE))->file($path) !== 'application/pdf'
+            || file_get_contents($path, false, null, 0, 5) !== '%PDF-')) {
+            throw new \App\Core\ValidationException(['document' => 'The payment confirmation document must be a valid PDF.']);
+        }
+        return $this->store($caseId, null, $file, 'completed', $subcategory, $description, false, $userId);
+    }
+
     public function forCustomer(int $customerId): array
     {
         return $this->db->fetchAll(
@@ -133,6 +154,12 @@ final class DocumentService
 
     public function archive(int $documentId, int $userId): void
     {
+        if ($this->db->fetch('SELECT id FROM payments WHERE receipt_document_id = ? LIMIT 1', [$documentId]) !== null) {
+            throw new HttpException(422, 'Payment confirmation PDFs are retained with the payment history.');
+        }
+        if ($this->db->fetch('SELECT id FROM quotations WHERE uploaded_document_id = ? LIMIT 1', [$documentId]) !== null) {
+            throw new HttpException(422, 'Quotation documents are retained with their quotation history. Upload a new quotation to replace an earlier version.');
+        }
         $this->db->transaction(function () use ($documentId, $userId): void {
             $document = $this->db->fetch('SELECT id, case_id, customer_visible FROM documents WHERE id = ? AND deleted_at IS NULL FOR UPDATE', [$documentId]);
             if ($document === null) {

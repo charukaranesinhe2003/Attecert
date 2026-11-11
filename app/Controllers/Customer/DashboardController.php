@@ -27,7 +27,7 @@ final class DashboardController extends Controller
         $id = (int) $customer['id'];
         $locale = locale();
         $cases = $this->db->fetchAll(
-            'SELECT c.*, ct.name AS country_name, co.code AS country_code, st.name AS status_name, s.code AS status_code, s.badge_tone, s.is_terminal,
+            'SELECT c.*, ct.name AS country_name, co.code AS country_code, COALESCE(c.custom_status, st.name, s.code) AS status_name, s.code AS status_code, s.badge_tone, s.is_terminal,
                     (SELECT t.name FROM case_services cs INNER JOIN service_translations t ON t.service_id = cs.service_id AND t.locale = ? WHERE cs.case_id = c.id ORDER BY cs.id LIMIT 1) AS service_name
              FROM cases c
              LEFT JOIN countries co ON co.id = c.country_id
@@ -49,7 +49,7 @@ final class DashboardController extends Controller
             [$id]
         );
         $payments = $this->db->fetchAll(
-            'SELECT p.*, i.number AS invoice_number FROM payments p INNER JOIN invoices i ON i.id = p.invoice_id WHERE p.customer_id = ? ORDER BY p.paid_at DESC, p.id DESC LIMIT 6',
+            'SELECT p.*, i.number AS invoice_number FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id WHERE p.customer_id = ? ORDER BY p.paid_at DESC, p.id DESC LIMIT 6',
             [$id]
         );
         $documents = $this->db->fetchAll(

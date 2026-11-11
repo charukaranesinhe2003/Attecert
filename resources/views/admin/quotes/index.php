@@ -5,11 +5,12 @@
 </form>
 <p><?= e(__('admin_lists.results', ['count' => (string) $page['total']])) ?></p>
 <?php if ($page['rows'] === []): ?><p class="empty"><?= e(__('admin_lists.empty')) ?></p><?php else: ?>
-<div class="table-wrap"><table><thead><tr><th><?= e(__('admin_lists.customer')) ?></th><th><?= e(__('admin_lists.contact')) ?></th><th><?= e(__('admin_lists.date')) ?></th><th><?= e(__('admin_lists.status')) ?></th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th><?= e(__('admin_lists.customer')) ?></th><th><?= e(__('admin_lists.contact')) ?></th><th><?= e(__('admin_lists.date')) ?></th><th><?= e(__('admin_lists.status')) ?></th><th>Quotation</th></tr></thead><tbody>
 <?php foreach ($page['rows'] as $row): ?><tr>
     <td data-label="<?= e(__('admin_lists.customer')) ?>"><a href="<?= e(url('/admin/quote-requests/' . $row['id'])) ?>"><?= e($row['name']) ?></a><br><?= e((string) $row['country_name']) ?></td>
     <td data-label="<?= e(__('admin_lists.contact')) ?>"><?= e($row['email']) ?><br><?= e((string) $row['phone']) ?></td>
     <td data-label="<?= e(__('admin_lists.date')) ?>"><?= e(format_datetime($row['created_at'])) ?></td>
     <td data-label="<?= e(__('admin_lists.status')) ?>"><?= e(__('admin_lists.' . $row['status'])) ?></td>
+    <td data-label="Quotation"><?php if ($canUploadQuotation): ?><a class="btn btn-primary" href="<?= e(url('/admin/quote-requests/' . $row['id'] . '#upload-quotation')) ?>">Upload &amp; email quotation</a><?php endif; ?></td>
 </tr><?php endforeach; ?></tbody></table></div><?= paginator($page, '/admin/quote-requests') ?>
 <?php endif; ?>

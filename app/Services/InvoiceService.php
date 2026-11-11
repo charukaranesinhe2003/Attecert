@@ -144,7 +144,7 @@ final class InvoiceService
             'SELECT c.*, ct.name AS country_name FROM cases c LEFT JOIN country_translations ct ON ct.country_id = c.country_id AND ct.locale = \'en\' WHERE c.id = ?',
             [$invoice['case_id']]
         );
-        $payments = $this->db->fetchAll('SELECT * FROM payments WHERE invoice_id = ? ORDER BY paid_at', [$invoiceId]);
+        $payments = $this->db->fetchAll("SELECT * FROM payments WHERE invoice_id = ? AND status IN ('completed', 'refunded') ORDER BY paid_at", [$invoiceId]);
 
         return compact('invoice', 'items', 'customer', 'case', 'payments');
     }

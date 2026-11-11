@@ -18,6 +18,9 @@ final class DashboardController extends Controller
 
     public function index(Request $request): Response
     {
+        if (app(\App\Services\AuthService::class)->isRestrictedStaff()) {
+            return app(CaseController::class)->index($request);
+        }
         return $this->view('admin/dashboard', [
             'title' => __('admin.dashboard'),
             'robots' => 'noindex',

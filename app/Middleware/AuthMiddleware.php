@@ -30,6 +30,12 @@ final class AuthMiddleware
 
             return Response::redirect(url('/login'));
         }
+        $verificationRoute = in_array($request->path(), ['/verify-customer', '/verify-customer/send'], true);
+        $logout = $request->path() === '/logout' && $request->isPost();
+        if ($this->auth->needsVerification() && !$verificationRoute && !$logout) {
+            if ($request->wantsJson()) { return Response::json(['ok' => false, 'error' => 'verification_required', 'redirect' => url('/verify-customer')], 403); }
+            return Response::redirect(url('/verify-customer'));
+        }
         $passwordRoute = $request->path() === '/admin/password' && in_array($request->method(), ['GET', 'POST'], true);
         $logoutRoute = $request->path() === '/logout' && $request->method() === 'POST';
         if ($this->auth->mustChangePassword() && !$passwordRoute && !$logoutRoute) {

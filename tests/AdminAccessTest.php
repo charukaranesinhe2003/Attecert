@@ -123,14 +123,10 @@ final class AdminAccessTest extends DatabaseTestCase
         $this->assertSame('0700000000', $this->db->fetchColumn('SELECT phone FROM customers WHERE id = ?', [$this->customerId]));
     }
 
-    public function testCustomerDetailsHideUnauthorizedActionsAndFinance(): void
+    public function testCustomerDetailsAreAdminOnly(): void
     {
         $this->signInAsRole('processing_staff');
-        $html = $this->body(app(CustomerController::class)->show($this->get(), (string) $this->customerId));
-        $this->assertStringNotContainsString('name="is_active"', $html);
-        $this->assertStringNotContainsString('/admin/quotations/', $html);
-        $this->assertStringNotContainsString('/admin/invoices/', $html);
-        $this->assertStringNotContainsString('/admin/payments/', $html);
+        $this->assertForbidden(fn () => app(CustomerController::class)->show($this->get(), (string) $this->customerId));
     }
 
     public function testCompletedDocumentReleaseIsIdempotentAuditedAndReversible(): void
@@ -169,14 +165,19 @@ final class AdminAccessTest extends DatabaseTestCase
         app(DocumentController::class)->visibility($this->post(['customer_visible' => '1']), (string) $id);
     }
 
-    public function testReleaseRouteEnforcesExistingUploadPermission(): void
+    public function testReleaseRouteEnforcesCaseAssignment(): void
     {
         $id = $this->document('completed');
         $this->signInAsRole('finance_staff');
         $router = new Router();
         $routes = require base_path('routes/web.php');
         $routes($router);
-        $this->assertForbidden(fn () => $router->dispatch($this->post(['customer_visible' => '1', 'confirmed' => '1'], '/admin/documents/' . $id . '/visibility'), app()));
+        try {
+            $router->dispatch($this->post(['customer_visible' => '1', 'confirmed' => '1'], '/admin/documents/' . $id . '/visibility'), app());
+            $this->fail('Unassigned staff released a document.');
+        } catch (HttpException $exception) {
+            $this->assertSame(404, $exception->status());
+        }
         $this->assertSame(0, (int) $this->db->fetchColumn('SELECT customer_visible FROM documents WHERE id = ?', [$id]));
     }
 

@@ -28,6 +28,7 @@ final class ProcessController extends Controller
 
     public function index(Request $request): Response
     {
+        $this->requireAdmin();
         return $this->view('admin/process/index', [
             'title' => __('admin.processing'),
             'robots' => 'noindex',
@@ -41,6 +42,7 @@ final class ProcessController extends Controller
 
     public function mofa(Request $request): Response
     {
+        $this->requireAdmin();
         $status = $this->statusFilter($request);
         return $this->view('admin/process/mofa', [
             'title' => __('admin.mofa'),
@@ -53,6 +55,7 @@ final class ProcessController extends Controller
 
     public function embassy(Request $request): Response
     {
+        $this->requireAdmin();
         $status = $this->statusFilter($request);
         return $this->view('admin/process/embassy', [
             'title' => __('admin.embassy'),
@@ -66,6 +69,7 @@ final class ProcessController extends Controller
 
     public function saveMofa(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
         $data = $this->validate($request, [
             'reference_no' => 'nullable|max:80',
             'status' => 'required|in:not_started,submitted,processing,completed',
@@ -93,6 +97,7 @@ final class ProcessController extends Controller
 
     public function saveEmbassy(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
         $data = $this->validate($request, [
             'embassy_name' => 'required|max:160',
             'country_id' => 'nullable|numeric',
@@ -123,12 +128,12 @@ final class ProcessController extends Controller
     private function currentProcesses(string $kind, bool $limit = false, string $status = ''): array
     {
         $table = $kind === 'mofa' ? 'mofa_processes' : 'embassy_processes';
-        $where = '';
+        $where = ' AND ' . app(\App\Services\CaseAccessService::class)->scope('c.id');
         $params = [];
         if ($status === 'active') {
-            $where = ' AND p.status IN (\'submitted\', \'processing\') AND s.is_terminal = 0';
+            $where .= ' AND p.status IN (\'submitted\', \'processing\') AND s.is_terminal = 0';
         } elseif ($status !== '') {
-            $where = ' AND p.status = ?';
+            $where .= ' AND p.status = ?';
             $params[] = $status;
         }
 

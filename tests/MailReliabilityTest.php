@@ -107,6 +107,48 @@ final class MailReliabilityTest extends DatabaseTestCase
         self::assertSame('2', (string) $this->db->fetchColumn('SELECT attempts FROM mail_outbox WHERE email_log_id = ?', [$result['id']]));
     }
 
+    public function testLaterStepUpdateDeliversEveryLinkedDocumentThroughSmtpWithoutReuploading(): void
+    {
+        $smtp = $this->smtp(); $this->configureMail($smtp['port']);
+        $directory = storage_path('step-mail-fixture'); if (!is_dir($directory)) mkdir($directory, 0700, true);
+        $step = ['title' => 'Certificate review', 'public_description' => 'Both documents have been reviewed.', 'state' => 'pending', 'sort_order' => '1'];
+        $firstBytes = "%PDF-1.4\nOriginal first certificate\n%%EOF\n";
+        $secondBytes = "%PDF-1.4\nOriginal second certificate\n%%EOF\n";
+        file_put_contents($directory . '/first.pdf', $firstBytes); file_put_contents($directory . '/second.pdf', $secondBytes);
+        $file = static fn (string $name): array => ['name' => $name . '.pdf', 'tmp_name' => $directory . '/' . $name . '.pdf', 'error' => UPLOAD_ERR_OK, 'size' => filesize($directory . '/' . $name . '.pdf')];
+        $tracking = app(\App\Services\TrackingService::class);
+        $tracking->saveStep($this->caseId, null, $step, $file('first'));
+        $id = (int) $this->db->fetchColumn('SELECT id FROM case_tracking_steps WHERE case_id = ? ORDER BY id DESC LIMIT 1', [$this->caseId]);
+        $tracking->saveStep($this->caseId, $id, $step, $file('second'));
+        $delivery = $tracking->saveStep($this->caseId, $id, array_replace($step, ['state' => 'completed']));
+        $payload = json_decode($this->db->fetchColumn('SELECT payload FROM mail_outbox WHERE email_log_id = ?', [$delivery['id']]), true);
+        self::assertSame('first.pdf', $payload['attachment_name']); self::assertSame('second.pdf', $payload['attachments'][0]['name']);
+        $stored = $this->db->fetchColumn('SELECT stored_name FROM documents WHERE tracking_step_id = ? ORDER BY id DESC LIMIT 1', [$id]);
+        file_put_contents(storage_path('documents/' . $stored), '%PDF Changed after queueing');
+        $this->db->pdo()->commit();
+        self::assertSame('sent', app(MailService::class)->processQueue(1, $delivery['id'])[0]['status']);
+        $received = $this->smtpResult($smtp);
+        foreach (['first.pdf', 'second.pdf'] as $name) { self::assertStringContainsString($name, $received['message']); }
+        $flat = preg_replace('/\s+/', '', $received['message']);
+        self::assertStringContainsString(base64_encode($firstBytes), $flat); self::assertStringContainsString(base64_encode($secondBytes), $flat);
+        self::assertStringNotContainsString(base64_encode('%PDF Changed after queueing'), $flat);
+        self::assertSame('queued', $this->db->fetchColumn('SELECT status FROM email_logs WHERE id = ?', [$delivery['id'] - 1]));
+    }
+
+    public function testMissingAdditionalAttachmentFailsInsteadOfSendingAnIncompleteEmail(): void
+    {
+        $this->configureMail(1);
+        $directory = storage_path('extra-mail-fixture'); if (!is_dir($directory)) mkdir($directory, 0700, true);
+        file_put_contents($directory . '/first.pdf', '%PDF First'); file_put_contents($directory . '/second.pdf', '%PDF Second');
+        $delivery = app(MailService::class)->send('fixture@example.test', 'Multiple files', 'contact-received', ['name' => 'Fixture customer'],
+            'case', $this->caseId, $directory . '/first.pdf', 'first.pdf', null, [['path' => $directory . '/second.pdf', 'name' => 'second.pdf']]);
+        $payload = json_decode($this->db->fetchColumn('SELECT payload FROM mail_outbox WHERE email_log_id = ?', [$delivery['id']]), true);
+        unlink(storage_path('mail/' . $payload['attachments'][0]['path']));
+        $this->db->pdo()->commit();
+        self::assertSame('failed', app(MailService::class)->processQueue(1, $delivery['id'])[0]['status']);
+        self::assertSame('failed', app(MailService::class)->resend($delivery['id'])['status']);
+    }
+
     public function testConnectionRefusalHasBoundedRetriesAndNeverClaimsDelivery(): void
     {
         $listener = stream_socket_server('tcp://127.0.0.1:0');

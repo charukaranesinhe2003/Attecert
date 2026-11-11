@@ -1,7 +1,12 @@
 <?php $q = $bundle['quotation']; ?>
 <p><?= e(__('fields.status')) ?>: <?= e($q['status']) ?> · <?= e(__('fields.case')) ?> <?= e($bundle['case']['number']) ?></p>
+<?php if (!empty($q['uploaded_document_id'])): ?>
+<p>Your quotation document is ready. Download the original PDF prepared for your case.</p>
+<?php else: ?>
 <div class="table-wrap"><table><thead><tr><th><?= e(__('fields.description')) ?></th><th><?= e(__('fields.quantity')) ?></th><th><?= e(__('fields.price')) ?></th><th><?= e(__('fields.total')) ?></th></tr></thead><tbody><?php foreach ($bundle['items'] as $item): ?><tr><td><?= e($item['description']) ?></td><td><?= e($item['quantity']) ?></td><td><?= e(money($item['unit_price'], $q['currency'])) ?></td><td><?= e(money($item['line_total'], $q['currency'])) ?></td></tr><?php endforeach; ?></tbody></table></div>
+<?php endif; ?>
 <p><strong><?= e(__('fields.total')) ?>: <?= e(money($q['total'], $q['currency'])) ?></strong></p>
+<?php if (!empty($q['notes'])): ?><p><?= nl2br(e($q['notes'])) ?></p><?php endif; ?>
 <p><a class="btn btn-ghost" href="<?= e(url('/portal/quotations/' . $q['id'] . '/pdf')) ?>"><?= e(__('actions.download')) ?></a></p>
 <?php if (in_array($q['status'], ['sent', 'viewed'], true)): ?>
 <form method="post" action="<?= e(url('/portal/quotations/' . $q['id'] . '/accept')) ?>"><?= csrf_field() ?><button class="btn btn-primary" type="submit"><?= e(__('quotations.accept')) ?></button></form>

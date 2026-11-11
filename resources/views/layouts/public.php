@@ -37,6 +37,8 @@ $robots = $robots ?? 'index,follow';
     <link rel="stylesheet" href="<?= e(asset('css/public.css')) ?>">
     <link rel="stylesheet" href="<?= e(asset('css/responsive.css')) ?>">
     <link rel="stylesheet" href="<?= e(asset('css/account.css')) ?>">
+    <?php if (($active ?? '') === 'track'): ?><link rel="stylesheet" href="<?= e(asset('css/tracking.css')) ?>"><?php endif; ?>
+    <?php if (in_array($active ?? '', ['track','quote'], true) || !empty($verificationPage)): ?><link rel="stylesheet" href="<?= e(asset('css/verification.css')) ?>"><?php endif; ?>
     <script type="application/ld+json">
         <?= json_encode([
             '@context' => 'https://schema.org',

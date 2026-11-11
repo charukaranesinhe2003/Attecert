@@ -24,6 +24,11 @@ final class PaymentService
     public function record(int $invoiceId, array $data, int $staffId): int
     {
         return $this->db->transaction(function () use ($invoiceId, $data, $staffId): int {
+            $caseId = $this->db->fetchColumn('SELECT case_id FROM invoices WHERE id = ?', [$invoiceId]);
+            if ($caseId !== false) {
+                // Use the same lock order as pending case-payment confirmation.
+                $this->db->fetch('SELECT id FROM cases WHERE id = ? FOR UPDATE', [$caseId]);
+            }
             $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ? FOR UPDATE', [$invoiceId]);
             if ($invoice === null) {
                 throw new \App\Core\HttpException(404, 'Invoice not found.');
@@ -62,6 +67,7 @@ final class PaymentService
                     $staffId,
                 ]
             );
+            $this->db->run('UPDATE payments SET confirmed_at = NOW(), confirmed_by = ? WHERE id = ?', [$staffId, $paymentId]);
             $paid = $isRefund ? Money::sub($invoice['amount_paid'], $amount) : Money::add($invoice['amount_paid'], $amount);
             $status = $this->statusFor($paid, (string) $invoice['total'], $isRefund, (string) $invoice['status']);
             $this->db->run('UPDATE invoices SET amount_paid = ?, status = ? WHERE id = ?', [$paid, $status, $invoice['id']]);
@@ -105,7 +111,21 @@ final class PaymentService
         if ($payment === null) {
             throw new \App\Core\HttpException(404, 'Payment not found.');
         }
-        $invoice = $this->db->fetch('SELECT * FROM invoices WHERE id = ?', [$payment['invoice_id']]);
+        if (!in_array($payment['status'], ['completed', 'refunded'], true)) {
+            throw new \App\Core\HttpException(409, 'A receipt is available after the payment is confirmed.');
+        }
+        if ($payment['receipt_document_id'] !== null) {
+            $document = $this->db->fetch('SELECT stored_name FROM documents WHERE id = ? AND case_id = ? AND deleted_at IS NULL', [$payment['receipt_document_id'], $payment['case_id']]);
+            $root = realpath(storage_path('documents'));
+            $path = $document === null ? false : realpath(storage_path('documents/' . $document['stored_name']));
+            if ($root === false || $path === false || !str_starts_with($path, $root . DIRECTORY_SEPARATOR) || !is_file($path)) {
+                throw new \App\Core\HttpException(404, 'The payment confirmation PDF is unavailable.');
+            }
+            return $path;
+        }
+        $invoice = $payment['invoice_id'] === null
+            ? ['number' => (string) $this->db->fetchColumn('SELECT number FROM cases WHERE id = ?', [$payment['case_id']]), 'case_payment' => true]
+            : $this->db->fetch('SELECT * FROM invoices WHERE id = ?', [$payment['invoice_id']]);
         $customer = $this->db->fetch('SELECT * FROM customers WHERE id = ?', [$payment['customer_id']]);
 
         return $this->pdf->receipt($payment, $invoice, $customer);

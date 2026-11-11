@@ -36,6 +36,7 @@ final class AuthController extends Controller
         }
         $target = (string) ($_SESSION['_intended'] ?? $this->auth->homePath());
         unset($_SESSION['_intended']);
+        if ($this->auth->needsVerification()) { return $this->redirect('/verify-customer'); }
         if ($this->auth->mustChangePassword()) {
             return $this->redirect('/admin/password');
         }
@@ -64,7 +65,7 @@ final class AuthController extends Controller
             throw new \App\Core\ValidationException(['password' => __('validation.confirmed')], $request->all());
         }
         $this->auth->register($data['name'], $data['email'], (string) ($data['phone'] ?? ''), $data['password'], locale());
-        flash('success', (string) setting('email_verification', '0') === '1' ? __('auth.verify_sent') : __('auth.registered'));
+        flash('success', config('verification.required', true) ? 'Account created. Sign in to verify your email or mobile number.' : ((string) setting('email_verification', '0') === '1' ? __('auth.verify_sent') : __('auth.registered')));
 
         return $this->redirect('/login');
     }

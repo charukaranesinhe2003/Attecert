@@ -18,13 +18,14 @@ final class MailService
     {
     }
 
-    public function send(string $to, string $subject, string $template, array $data = [], ?string $relatedType = null, ?int $relatedId = null, ?string $attachmentPath = null, ?string $attachmentName = null): array
+    public function send(string $to, string $subject, string $template, array $data = [], ?string $relatedType = null, ?int $relatedId = null, ?string $attachmentPath = null, ?string $attachmentName = null, ?string $expiresAt = null, array $attachments = []): array
     {
         $company = $this->company();
         $inner = View::render('emails/' . $template, array_merge($data, ['subject' => $subject, 'company' => $company]));
         $html = View::render('emails/layout', ['body' => $inner, 'company' => $company]);
         $body = $this->storeFile($html, '.html');
-        $payload = $this->snapshot($body, $attachmentPath, $attachmentName);
+        $payload = $this->snapshot($body, $attachmentPath, $attachmentName, $attachments);
+        if ($expiresAt !== null) { $payload['expires_at'] = $expiresAt; }
         // The sidecar preserves exact attachments before an older deployment applies migrations.
         $this->writeFile($this->savedPath($body . '.json'), json_encode($payload, JSON_THROW_ON_ERROR));
         [$status, $error] = $this->initialStatus();
@@ -136,9 +137,14 @@ final class MailService
 
     private function deliver(array $claim): array
     {
+        $expiryPayload = json_decode($claim['payload'], true, 512, JSON_THROW_ON_ERROR);
+        if (!empty($expiryPayload['expires_at']) && strtotime($expiryPayload['expires_at']) <= time()) {
+            return $this->finish($claim, 'failed', 'This message expired before delivery. Request a new verification code.');
+        }
         if (!class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
             $payload = json_decode($claim['payload'], true, 512, JSON_THROW_ON_ERROR);
             [$html, $attachment] = $this->loadPayload($payload);
+            if ($attachment !== []) { return $this->finish($claim, 'failed', 'SMTP attachment support is unavailable. Install the configured mail dependencies before retrying.'); }
             $headers = "MIME-Version: 1.0\r\nContent-type: text/html; charset=UTF-8\r\nFrom: {$payload['from_name']} <{$payload['from_address']}>\r\nReply-To: {$payload['from_address']}\r\nX-Mailer: PHP/" . phpversion();
             $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers);
             $status = $sent ? 'sent' : 'failed';
@@ -191,7 +197,7 @@ final class MailService
             $mailer->Body = $html;
             $mailer->AltBody = trim(html_entity_decode(strip_tags($html)));
             $mailer->MessageID = $payload['message_id'];
-            if ($attachment !== null) $mailer->addStringAttachment($attachment, $payload['attachment_name']);
+            foreach ($attachment as $file) { $mailer->addStringAttachment($file['bytes'], $file['name']); }
             $mailer->send();
             $status = 'sent';
         } catch (\Throwable $exception) {
@@ -241,7 +247,7 @@ final class MailService
         $this->db->run('INSERT INTO mail_outbox (email_log_id, payload, max_attempts) VALUES (?, ?, ?)', [$id, json_encode($payload, JSON_THROW_ON_ERROR), max(1, min(10, (int) config('mail.max_attempts', 3)))]);
     }
 
-    private function snapshot(string $body, ?string $attachmentPath, ?string $attachmentName): array
+    private function snapshot(string $body, ?string $attachmentPath, ?string $attachmentName, array $attachments = []): array
     {
         $from = $this->fromAddress();
         $domain = substr(strrchr($from, '@') ?: '@attecert.local', 1);
@@ -253,6 +259,12 @@ final class MailService
             $payload['attachment_path'] = $this->storeFile($bytes, '.attachment');
             $payload['attachment_name'] = $attachmentName ?: basename($attachmentPath);
             $payload['attachment_hash'] = hash('sha256', $bytes);
+        }
+        $payload['attachments'] = [];
+        foreach ($attachments as $file) {
+            $bytes = isset($file['path']) && is_file($file['path']) ? file_get_contents($file['path']) : false;
+            if ($bytes === false) { throw new \RuntimeException('A step email attachment is missing or unreadable.'); }
+            $payload['attachments'][] = ['path' => $this->storeFile($bytes, '.attachment'), 'name' => $file['name'] ?: basename($file['path']), 'hash' => hash('sha256', $bytes)];
         }
 
         return $payload;
@@ -282,7 +294,11 @@ final class MailService
             return $bytes;
         };
         $html = $read($payload['body_path'], $payload['body_hash']);
-        $attachment = $payload['attachment_path'] === null ? null : $read($payload['attachment_path'], $payload['attachment_hash']);
+        $attachment = [];
+        if ($payload['attachment_path'] !== null) {
+            $attachment[] = ['bytes' => $read($payload['attachment_path'], $payload['attachment_hash']), 'name' => $payload['attachment_name']];
+        }
+        foreach ($payload['attachments'] ?? [] as $file) { $attachment[] = ['bytes' => $read($file['path'], $file['hash']), 'name' => $file['name']]; }
 
         return [$html, $attachment];
     }
@@ -327,7 +343,7 @@ final class MailService
         if ($log['template'] === 'quotation' && $log['related_type'] === 'quotation' && $id > 0) {
             $service = app(QuotationService::class);
             $bundle = $service->bundle($id);
-            return ['path' => $service->pdfPath($id), 'name' => $bundle['quotation']['number'] . '.pdf'];
+            return ['path' => $service->pdfPath($id), 'name' => $service->downloadName($id)];
         }
         if ($log['template'] === 'invoice' && $log['related_type'] === 'invoice' && $id > 0) {
             $service = app(InvoiceService::class);

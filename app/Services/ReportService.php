@@ -14,6 +14,10 @@ final class ReportService
 
     public function dashboard(string $from = '', string $to = ''): array
     {
+        if ($this->auth->isRestrictedStaff()) {
+            return ['active' => null, 'unquoted' => null, 'awaiting_payment' => null, 'ready_docs' => null,
+                'recent_cases' => null, 'recent_quotes' => null, 'attention' => []];
+        }
         // Operational backlogs are current across all dates; period analytics live in Reports.
         $canCases = $this->auth->can('cases.view');
         $canQuote = $canCases && $this->auth->can('quotations.create');
@@ -40,7 +44,7 @@ final class ReportService
             ) : null,
             'recent_cases' => $canCases ? $this->db->fetchAll(
                 'SELECT c.number, c.id, c.created_at, cu.name AS customer_name,
-                        COALESCE(st.name, s.code) AS status_name, s.badge_tone
+                        COALESCE(c.custom_status, st.name, s.code) AS status_name, s.badge_tone
                  FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id
                  INNER JOIN workflow_statuses s ON s.id = c.status_id
                  LEFT JOIN workflow_status_translations st ON st.status_id = s.id AND st.locale = ?
@@ -52,6 +56,9 @@ final class ReportService
 
     public function attention(): array
     {
+        if ($this->auth->isRestrictedStaff()) {
+            return [];
+        }
         $queues = [];
         $caseJoin = ' FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id
                       INNER JOIN workflow_statuses s ON s.id = c.status_id ';

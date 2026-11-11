@@ -25,6 +25,7 @@ final class CustomerController extends Controller
 
     public function index(Request $request): Response
     {
+        $this->requireAdmin();
         $q = trim((string) $request->query('q', ''));
         $sql = 'SELECT cu.*, u.is_active AS login_active FROM customers cu LEFT JOIN users u ON u.id = cu.user_id WHERE cu.deleted_at IS NULL';
         $params = [];
@@ -46,6 +47,7 @@ final class CustomerController extends Controller
 
     public function show(Request $request, string $id): Response
     {
+        $this->requireAdmin();
         $customer = $this->db->fetch('SELECT cu.*, u.is_active AS login_active, u.locale FROM customers cu LEFT JOIN users u ON u.id = cu.user_id WHERE cu.id = ? AND cu.deleted_at IS NULL', [(int) $id]);
         if ($customer === null) {
             throw new HttpException(404);
@@ -67,6 +69,7 @@ final class CustomerController extends Controller
 
     public function update(Request $request, string $id): Response
     {
+        $this->requireAdmin();
         $data = $this->validate($request, [
             'name' => 'required|min:2|max:160',
             'phone' => 'nullable|max:40',

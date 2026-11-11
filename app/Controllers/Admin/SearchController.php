@@ -49,10 +49,10 @@ final class SearchController extends Controller
                 'meta' => $row['document_title'] . ' · ' . ($row['status_name'] ?: ''),
                 'href' => url('/admin/cases/' . $row['id']),
             ], $this->db->fetchAll(
-                'SELECT c.id, c.number, c.document_title, cu.name AS customer_name, st.name AS status_name
+                'SELECT c.id, c.number, c.document_title, cu.name AS customer_name, COALESCE(c.custom_status, st.name) AS status_name
                  FROM cases c INNER JOIN customers cu ON cu.id = c.customer_id
                  LEFT JOIN workflow_status_translations st ON st.status_id = c.status_id AND st.locale = \'en\'
-                 WHERE c.deleted_at IS NULL AND (
+                 WHERE ' . app(\App\Services\CaseAccessService::class)->scope('c.id') . ' AND c.deleted_at IS NULL AND (
                     c.number LIKE ? OR c.number = ? OR cu.name LIKE ? OR cu.email LIKE ?
                     OR cu.phone LIKE ? OR cu.whatsapp LIKE ? OR REPLACE(cu.phone, \' \', \'\') LIKE ?
                     OR c.document_title LIKE ?
@@ -88,7 +88,7 @@ final class SearchController extends Controller
                 'SELECT q.id, q.number, q.status, q.case_id, cu.name AS customer_name
                  FROM quotations q INNER JOIN customers cu ON cu.id = q.customer_id
                  INNER JOIN cases c ON c.id = q.case_id
-                 WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL AND q.number LIKE ? ORDER BY q.created_at DESC LIMIT 5',
+                 WHERE ' . app(\App\Services\CaseAccessService::class)->scope('c.id') . ' AND c.deleted_at IS NULL AND cu.deleted_at IS NULL AND q.number LIKE ? ORDER BY q.created_at DESC LIMIT 5',
                 [$like]
             ))];
         }
@@ -102,7 +102,7 @@ final class SearchController extends Controller
                 'SELECT i.id, i.number, i.status, i.case_id, cu.name AS customer_name
                  FROM invoices i INNER JOIN customers cu ON cu.id = i.customer_id
                  INNER JOIN cases c ON c.id = i.case_id
-                 WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL AND i.number LIKE ? ORDER BY i.created_at DESC LIMIT 5',
+                 WHERE ' . app(\App\Services\CaseAccessService::class)->scope('c.id') . ' AND c.deleted_at IS NULL AND cu.deleted_at IS NULL AND i.number LIKE ? ORDER BY i.created_at DESC LIMIT 5',
                 [$like]
             ))];
         }
@@ -116,19 +116,20 @@ final class SearchController extends Controller
                 'SELECT p.id, p.number, p.method, p.reference, p.case_id, cu.name AS customer_name
                  FROM payments p INNER JOIN customers cu ON cu.id = p.customer_id
                  INNER JOIN cases c ON c.id = p.case_id
-                 WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL AND (p.number LIKE ? OR p.reference LIKE ?) ORDER BY p.created_at DESC LIMIT 5',
+                 WHERE ' . app(\App\Services\CaseAccessService::class)->scope('c.id') . ' AND c.deleted_at IS NULL AND cu.deleted_at IS NULL AND (p.number LIKE ? OR p.reference LIKE ?) ORDER BY p.created_at DESC LIMIT 5',
                 [$like, $like]
             ))];
         }
 
-        if ($this->auth->can('quotes.manage')) {
+        if ($this->auth->can('quote_requests.manage')) {
             $groups[] = ['label' => 'Quote requests', 'items' => array_map(static fn (array $row): array => [
                 'title' => $row['name'],
                 'meta' => $row['email'] . ' · ' . $row['status'],
                 'href' => url('/admin/quote-requests/' . $row['id']),
             ], $this->db->fetchAll(
-                'SELECT id, name, email, status FROM quote_requests
-                 WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? ORDER BY created_at DESC LIMIT 5',
+                'SELECT q.id, q.name, q.email, q.status FROM quote_requests q
+                 WHERE ' . app(\App\Services\CaseAccessService::class)->quoteScope('q.id') . '
+                 AND (q.name LIKE ? OR q.email LIKE ? OR q.phone LIKE ?) ORDER BY q.created_at DESC LIMIT 5',
                 [$like, $like, $like]
             ))];
         }

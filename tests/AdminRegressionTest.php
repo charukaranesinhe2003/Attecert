@@ -83,30 +83,32 @@ final class AdminRegressionTest extends DatabaseTestCase
         self::assertGreaterThan(0, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM document_download_logs WHERE document_id = ?', [$document]));
     }
 
-    public function testSupportCaseScreenDoesNotDiscloseFinanceOrOfferProtectedActions(): void
+    public function testAssignedSupportCanManageFinanceAndCaseDetailsWithoutReassigning(): void
     {
         $quote = $this->quote();
         app(InvoiceService::class)->createFromQuotation($quote, $this->adminId);
-        $this->signInAsRole('customer_support');
-        $html = $this->body(app(CaseController::class)->show($this->request(), (string) $this->caseId));
-        self::assertStringNotContainsString('Sensitive custom finance item', $html);
-        self::assertStringNotContainsString('98,765.43', $html);
-        self::assertStringNotContainsString('data-tab="finance"', $html);
-        self::assertStringNotContainsString('/' . $this->caseId . '/status"', $html);
+        $staff = $this->signInAsRole('customer_support');
+        $this->db->run('UPDATE cases SET assigned_to = ? WHERE id = ?', [$staff, $this->caseId]);
+        $html = $this->body(app(CaseController::class)->details($this->request(), (string) $this->caseId));
+        self::assertStringContainsString('/admin/quotations/' . $quote, $html);
+        self::assertStringContainsString('data-tab="finance"', $html);
+        self::assertStringContainsString('/' . $this->caseId . '/status"', $html);
         self::assertStringNotContainsString('name="assigned_to"', $html);
-        self::assertStringNotContainsString('type="file"', $html);
+        self::assertStringContainsString('type="file"', $html);
     }
 
-    public function testProcessingCanEditServicesWithoutExposingCustomQuotationData(): void
+    public function testAssignedProcessingCanManageServicesAndQuotations(): void
     {
-        $this->quote();
-        $this->signInAsRole('processing_staff');
-        $html = $this->body(app(CaseController::class)->show($this->request(), (string) $this->caseId));
-        self::assertStringContainsString('name="assigned_to"', $html);
+        $quote = $this->quote();
+        $staff = $this->signInAsRole('processing_staff');
+        $this->db->run('UPDATE cases SET assigned_to = ? WHERE id = ?', [$staff, $this->caseId]);
+        $html = $this->body(app(CaseController::class)->details($this->request(), (string) $this->caseId));
+        self::assertStringNotContainsString('name="assigned_to"', $html);
         self::assertStringContainsString('/' . $this->caseId . '/mofa"', $html);
         self::assertStringNotContainsString('data-quote-builder', $html);
-        self::assertStringNotContainsString('data-tab="finance"', $html);
-        self::assertStringNotContainsString('Sensitive custom finance item', $html);
+        self::assertStringContainsString('name="quotation_document"', $html);
+        self::assertStringContainsString('data-tab="finance"', $html);
+        self::assertStringContainsString('/admin/quotations/' . $quote, $html);
     }
 
     public function testCaseServiceReplacementValidatesBeforeDeletingAndPreservesMissingCustomPrice(): void
@@ -174,21 +176,21 @@ final class AdminRegressionTest extends DatabaseTestCase
         $router = new Router();
         (require base_path('routes/web.php'))($router);
         try {
-            $router->dispatch(new Request('GET', '/admin/cases', [], [], [], $_SERVER, []), app());
-            self::fail('Content editor cannot access cases.');
+            $router->dispatch(new Request('GET', '/admin/users', [], [], [], $_SERVER, []), app());
+            self::fail('Staff cannot access user administration.');
         } catch (HttpException $exception) {
             self::assertSame(403, $exception->status());
         }
         $this->signInAsRole('customer_support');
         try {
             $router->dispatch(new Request('POST', '/admin/invoices/1/payments', [], ['amount' => '1'], [], $_SERVER, []), app());
-            self::fail('Support cannot post payments.');
+            self::fail('Unassigned staff cannot post payments.');
         } catch (HttpException $exception) {
-            self::assertSame(403, $exception->status());
+            self::assertSame(404, $exception->status());
         }
     }
 
-    public function testDraftIssuanceRequiresApprovalEvenWhenEmailIsRequested(): void
+    public function testUnassignedStaffCannotIssueDraftEvenWhenEmailIsRequested(): void
     {
         $draft = app(QuotationService::class)->save($this->caseId, ['lines' => [['description' => 'Draft fixture', 'quantity' => 1, 'unit_price' => 100]]], $this->adminId, false, true);
         $this->db->run("DELETE rp FROM role_permissions rp INNER JOIN roles r ON r.id = rp.role_id INNER JOIN permissions p ON p.id = rp.permission_id WHERE r.code = 'finance_staff' AND p.code = 'quotations.approve'");
@@ -200,9 +202,9 @@ final class AdminRegressionTest extends DatabaseTestCase
         ] as $action) {
             try {
                 $action();
-                self::fail('Emailing a draft must not bypass issuance permission.');
+                self::fail('Emailing a draft must not bypass assignment.');
             } catch (HttpException $exception) {
-                self::assertSame(403, $exception->status());
+                self::assertSame(404, $exception->status());
             }
         }
         self::assertSame('draft', $this->db->fetchColumn('SELECT status FROM quotations WHERE id = ?', [$draft]));

@@ -86,54 +86,37 @@ final class WorkflowService
             if ($target === null) {
                 throw new \RuntimeException(__('admin_workflow.active_status_required'));
             }
-            if ((int) $case['status_id'] === (int) $target['id']) {
+            if ((int) $case['status_id'] === (int) $target['id'] && $case['custom_status'] === null) {
                 return false;
             }
-            $backward = (int) $target['sort_order'] < (int) $case['status_order'];
-            if ($automatic && ((bool) $case['is_terminal'] || (int) $target['sort_order'] <= (int) $case['status_order'])) {
+            $backward = $case['custom_status'] === null && (int) $target['sort_order'] < (int) $case['status_order'];
+            if ($automatic && ($case['custom_status'] !== null || (bool) $case['is_terminal'] || (int) $target['sort_order'] <= (int) $case['status_order'])) {
                 return false;
             }
             if (!$automatic && ($backward || (bool) $case['is_terminal']) && (!$confirmed || trim((string) $notes) === '')) {
                 throw new \RuntimeException(__('admin_workflow.reversal_required'));
             }
             $statusId = (int) $target['id'];
-            $this->db->run('UPDATE cases SET status_id = ?, completed_at = ?, cancelled_at = ? WHERE id = ?', [
+            $this->db->run('UPDATE cases SET status_id = ?, custom_status = NULL, completed_at = ?, cancelled_at = ? WHERE id = ?', [
                 $statusId,
                 $code === 'completed' ? date('Y-m-d H:i:s') : null,
                 $code === 'cancelled' ? date('Y-m-d H:i:s') : null,
                 $caseId,
             ]);
-            $this->db->insert(
+            $historyId = $this->db->insert(
                 'INSERT INTO case_status_history (case_id, status_id, staff_id, notes, customer_visible) VALUES (?, ?, ?, ?, ?)',
                 [$caseId, $statusId, $staffId, $notes, $customerVisible ? 1 : 0]
             );
+            if ($customerVisible) {
+                app(ProgressHistoryService::class)->record($caseId, (string) ($target['name'] ?? $code), '', 'status', null, null, $historyId, 'status_updated');
+            }
             $this->audit->log($staffId, 'case_status_changed', 'case', $caseId, [
                 'from_status' => $case['status_code'], 'status' => $code,
                 'source' => $automatic ? 'automatic' : 'manual',
                 'confirmed_reversal' => !$automatic && ($backward || (bool) $case['is_terminal']),
             ]);
-            if ($notify && $customerVisible && $case['user_id'] !== null) {
-                $label = (string) ($target['name'] ?? $code);
-                $this->notifications->notify(
-                    (int) $case['user_id'],
-                    __('notifications.status_title', ['status' => $label]),
-                    __('notifications.status_body', ['number' => $case['number'], 'status' => $label]),
-                    '/portal/applications/' . $caseId
-                );
-                $this->mail->send(
-                    $case['email'],
-                    __('mail.status_subject', ['number' => $case['number']]),
-                    'status-changed',
-                    [
-                        'name' => $case['customer_name'],
-                        'number' => $case['number'],
-                        'status' => $label,
-                        'notes' => (string) $notes,
-                        'link' => absolute_url('/portal/applications/' . $caseId),
-                    ],
-                    'case',
-                    $caseId
-                );
+            if ($notify && $customerVisible) {
+                app(CustomerUpdateService::class)->send($caseId, (string) ($target['name'] ?? $code), (string) $notes);
             }
             return true;
         });
@@ -142,7 +125,10 @@ final class WorkflowService
     public function history(int $caseId, bool $publicOnly = false, bool $anonymous = false): array
     {
         // Anonymous tracking exposes status and time only. Customer-visible notes can contain personal data.
-        $columns = $anonymous ? 's.code, s.badge_tone, t.name, h.created_at, NULL AS notes' : 'h.*, s.code, s.badge_tone, t.name, u.name AS staff_name';
+        $statusColumns = "CASE WHEN h.custom_status IS NULL THEN s.code ELSE 'custom' END AS code,
+            CASE WHEN h.custom_status IS NULL THEN s.badge_tone ELSE 'neutral' END AS badge_tone,
+            COALESCE(h.custom_status, t.name, s.code) AS name";
+        $columns = $anonymous ? $statusColumns . ', h.created_at, NULL AS notes' : 'h.*, ' . $statusColumns . ', u.name AS staff_name';
         $sql = 'SELECT ' . $columns . '
                 FROM case_status_history h
                 INNER JOIN workflow_statuses s ON s.id = h.status_id

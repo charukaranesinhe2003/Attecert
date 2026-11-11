@@ -17,7 +17,7 @@ final class CustomerMiddleware
 
     public function handle(Request $request, callable $next): Response
     {
-        if ($this->auth->customer() === null) {
+        if ($this->auth->isRestrictedStaff() || $this->auth->customer() === null) {
             throw new HttpException(403, 'A customer account is required.');
         }
 

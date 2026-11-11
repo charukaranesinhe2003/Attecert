@@ -80,6 +80,11 @@ final class UserController extends Controller
             'role' => 'required|max:40',
         ]);
         $role = $this->validatedRole((string) $data['role']);
+        // Preserve the exact password chosen by the administrator.
+        $data['password'] = $request->input('password');
+        if (mb_strlen($data['password']) > 200 || str_contains($data['password'], "\0")) {
+            throw new ValidationException(['password' => 'Use a password between 8 and 200 characters.']);
+        }
         $email = mb_strtolower(trim((string) $data['email']));
         $safeInput = array_diff_key($data, ['password' => true]);
         if ($this->db->fetchColumn('SELECT id FROM users WHERE email = ?', [$email])) {
@@ -148,6 +153,85 @@ final class UserController extends Controller
         flash('success', __('admin.saved'));
 
         return $this->redirect('/admin/users');
+    }
+
+    public function passwordForm(Request $request, string $id): Response
+    {
+        $user = $this->managedStaff((int) $id);
+        if ((int) $id === $this->auth->id()) {
+            return $this->redirect('/admin/password');
+        }
+        return $this->view('admin/users/password', [
+            'title' => 'Change staff password', 'active' => 'users', 'staffUser' => $user,
+        ], 'layouts/admin');
+    }
+
+    public function password(Request $request, string $id): Response
+    {
+        if ((int) $id === $this->auth->id()) {
+            return $this->redirect('/admin/password');
+        }
+        $password = $request->input('password');
+        if (!is_string($password) || mb_strlen($password) < 8 || mb_strlen($password) > 200 || str_contains($password, "\0")) {
+            throw new ValidationException(['password' => 'Use a password between 8 and 200 characters.']);
+        }
+        if (!is_string($request->input('password_confirmation')) || !hash_equals($password, $request->input('password_confirmation'))) {
+            throw new ValidationException(['password_confirmation' => 'The password confirmation must match.']);
+        }
+        $hash = \App\Helpers\Password::hash($password);
+        $this->db->transaction(function () use ($id, $hash): void {
+            $user = $this->managedStaff((int) $id, true);
+            $this->db->run('UPDATE users SET password_hash = ?, must_change_password = 1, locked_until = NULL, failed_login_count = 0 WHERE id = ?', [$hash, (int) $id]);
+            $this->db->run("UPDATE password_resets SET used_at = NOW() WHERE email = ? AND purpose = 'reset' AND used_at IS NULL", [$user['email']]);
+            $this->audit->log($this->auth->id(), 'staff_password_changed', 'user', (int) $id);
+        });
+        flash('success', 'Staff password changed. Existing sessions are signed out. The staff member must change this temporary password after signing in.');
+        return $this->redirect('/admin/users');
+    }
+
+    public function destroy(Request $request, string $id): Response
+    {
+        $this->validate($request, ['confirmed' => 'required|in:1']);
+        $this->db->transaction(function () use ($id): void {
+            $this->db->fetch("SELECT id FROM roles WHERE code = 'super_admin' FOR UPDATE");
+            $user = $this->managedStaff((int) $id, true);
+            if ((int) $id === $this->auth->id()) {
+                throw new ValidationException(['user' => 'You cannot delete your own account.']);
+            }
+            if (in_array('super_admin', $user['roles'], true) && (int) $user['is_active'] === 1) {
+                $other = $this->db->fetch("SELECT u.id FROM users u WHERE u.id <> ? AND u.is_active = 1 AND u.deleted_at IS NULL
+                    AND EXISTS (SELECT 1 FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.code = 'super_admin') LIMIT 1 FOR UPDATE", [(int) $id]);
+                if ($other === null) {
+                    throw new ValidationException(['user' => 'Keep at least one active super administrator.']);
+                }
+            }
+            $unassigned = $this->db->run('UPDATE cases SET assigned_to = NULL WHERE assigned_to = ?', [(int) $id])->rowCount();
+            $unassignedQuotes = $this->db->run('UPDATE quote_requests SET assigned_to = NULL WHERE assigned_to = ?', [(int) $id])->rowCount();
+            $this->db->run('UPDATE users SET is_active = 0, deleted_at = NOW() WHERE id = ?', [(int) $id]);
+            $this->db->run("UPDATE password_resets SET used_at = NOW() WHERE email = ? AND purpose = 'reset' AND used_at IS NULL", [$user['email']]);
+            $this->audit->log($this->auth->id(), 'staff_deleted', 'user', (int) $id, ['unassigned_cases' => $unassigned, 'unassigned_quote_requests' => $unassignedQuotes]);
+        });
+        flash('success', 'Staff account deleted and access removed. Their cases and quote requests are now unassigned in Operations. History is retained.');
+        return $this->redirect('/admin/users');
+    }
+
+    private function managedStaff(int $id, bool $lock = false): array
+    {
+        if (!$this->auth->isAdmin() || !$this->auth->can('users.manage')) {
+            throw new HttpException(403, 'Only administrators can manage staff.');
+        }
+        $user = $this->db->fetch('SELECT id, name, email, is_active FROM users WHERE id = ? AND deleted_at IS NULL' . ($lock ? ' FOR UPDATE' : ''), [$id]);
+        if ($user === null) {
+            throw new HttpException(404, 'Staff account not found.');
+        }
+        $user['roles'] = array_column($this->db->fetchAll('SELECT r.code FROM roles r INNER JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?', [$id]), 'code');
+        if (array_diff($user['roles'], ['customer']) === []) {
+            throw new HttpException(403, 'Manage customer accounts from Customers.');
+        }
+        if (in_array('super_admin', $user['roles'], true) && !$this->canManagePrivileged()) {
+            throw new HttpException(403, __('admin.forbidden_role'));
+        }
+        return $user;
     }
 
     private function canManagePrivileged(): bool

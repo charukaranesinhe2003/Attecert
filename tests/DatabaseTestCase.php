@@ -131,6 +131,10 @@ abstract class DatabaseTestCase extends TestCase
         $items['database']['database'] = self::$databaseName;
         $items['app']['storage_path'] = self::$artifactRoot;
         $items['mail']['host'] = ''; // Never send external messages from tests.
+        $items['sms']['user_id'] = '';
+        $items['sms']['api_key'] = '';
+        $items['verification']['required'] = false;
+        $items['verification']['public_required'] = false; // Content tests isolate rendering; public OTP tests explicitly enable the gate.
         $property->setValue(null, $items);
     }
 

@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="<?= e(asset('css/base.css')) ?>">
     <link rel="stylesheet" href="<?= e(asset('css/portal.css')) ?>">
     <link rel="stylesheet" href="<?= e(asset('css/admin.css')) ?>">
+    <?php if (($active ?? '') === 'cases'): ?><link rel="stylesheet" href="<?= e(asset('css/case-workflow.css')) ?>"><?php endif; ?>
 </head>
 <body class="portal-body admin-body">
 <?php
@@ -19,8 +20,10 @@ $user = $auth->user() ?? [];
 $passwordChangeRequired = $auth->mustChangePassword();
 $can = static fn (?string $permission): bool => $permission === null || (!$passwordChangeRequired && $auth->can($permission));
 $navItems = [
+    ['operations', '/admin/operations', 'users', 'Assign staff', 'operations.manage'],
+    ['quotes', '/admin/quote-requests', 'mail', 'admin.quote_requests', 'quote_requests.manage'],
     ['cases', '/admin/cases', 'document', 'admin.cases', 'cases.view'],
-    ['quotes', '/admin/quote-requests', 'mail', 'admin.quote_requests', 'quotes.manage'],
+    ['tracking', '/admin/tracking', 'stamp', 'portal.tracking', 'cases.edit'],
     ['documents', '/admin/documents', 'file', 'admin.documents', 'documents.download'],
     ['processing', '/admin/processing', 'stamp', 'admin.processing', 'cases.edit'],
     ['customers', '/admin/customers', 'users', 'admin.customers', 'customers.view'],
@@ -43,11 +46,14 @@ $navItems = [
     ['password', '/admin/password', 'settings', 'staff_security.title', null],
 ];
 $navGroups = [
-    'operations' => ['cases', 'quotes', 'customers', 'contacts', 'documents', 'processing'],
+    'operations' => ['operations', 'quotes', 'cases', 'tracking', 'documents', 'processing', 'customers', 'contacts'],
     'finance' => ['quotations', 'invoices', 'payments', 'reports'],
     'website' => ['content', 'services', 'countries', 'articles', 'faqs', 'document_types', 'translations'],
     'administration' => ['users', 'audit', 'emails', 'settings', 'password'],
 ];
+if ($auth->isRestrictedStaff()) {
+    $navItems = array_filter($navItems, static fn (array $item): bool => !in_array($item[0], ['emails', 'documents', 'processing', 'customers', 'contacts'], true));
+}
 $quickActions = array_values(array_filter([
     $can('cases.create') && $can('cases.view') ? ['/admin/cases/create', __('admin.new_case')] : null,
     $can('quotations.create') && $can('cases.view') ? ['/admin/cases?status=unquoted', __('admin.new_quotation_hint')] : null,

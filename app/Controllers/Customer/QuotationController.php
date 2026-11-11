@@ -87,7 +87,7 @@ final class QuotationController extends Controller
         $bundle = $this->owned((int) $id);
         $path = $this->quotations->pdfPath((int) $id);
 
-        return Response::download($path, $bundle['quotation']['number'] . '.pdf', 'application/pdf');
+        return Response::download($path, $this->quotations->downloadName((int) $id), 'application/pdf');
     }
 
     private function owned(int $id): array

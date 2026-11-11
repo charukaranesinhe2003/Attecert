@@ -1,0 +1,21 @@
+.verification-page{padding:clamp(32px,6vw,72px) 18px;background:linear-gradient(160deg,#f4f8f6,#edf5f3);min-height:70vh}
+.verification-shell{width:100%;max-width:620px;margin:auto;min-width:0}
+.verification-heading{text-align:center;margin:0 auto 26px}.verification-heading h1{font-family:var(--font-sans);font-size:clamp(26px,5vw,36px);line-height:1.2;margin-bottom:12px}
+.verification-heading>p:last-child{color:var(--text-secondary);font-size:15px;line-height:1.65;max-width:52ch;margin:0 auto}
+.verification-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));list-style:none;padding:0;margin:0 0 20px;gap:8px;font-size:12px;font-weight:700;color:#64788b}
+.verification-progress li{padding:10px 8px;text-align:center;border-radius:9px;background:#e6eeeb;line-height:1.45}.verification-progress .is-active{background:#0f776e;color:#fff}.verification-progress .is-done{background:#d9eee6;color:#176454}
+.verification-card{background:#fff;border:1px solid #dce7e2;border-radius:18px;padding:clamp(20px,5vw,32px);box-shadow:0 12px 40px rgba(16,45,60,.05);min-width:0}
+.verification-card h2{font-family:var(--font-sans);font-size:20px;line-height:1.3;margin:0 0 18px}.verification-card p{font-size:14px;line-height:1.65;overflow-wrap:anywhere}
+.verification-card .stack{display:flex;flex-direction:column;gap:16px}.verification-card .stack>p{margin:0}.verification-card label{font-size:14px;font-weight:600;line-height:1.5;gap:6px}
+.verification-card input,.verification-card select{min-width:0;min-height:46px;font-size:16px;max-width:100%}.verification-card .btn{min-height:46px;font-size:14px;line-height:1.4;text-align:center;white-space:normal}
+.verification-card .stack>.btn{width:100%}.verification-card button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.verification-card .verification-code{font-size:28px;letter-spacing:.35em;text-align:center;padding:14px 10px 14px 20px;font-weight:700;min-height:66px}
+.verification-code-heading{display:flex;align-items:center;gap:12px;margin-bottom:16px}.verification-code-heading h2{margin:0}.verification-icon{display:grid;place-items:center;width:42px;height:42px;flex-shrink:0;border-radius:12px;background:#e5f3ee;color:#0f776e}
+.verification-method{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:10px}.verification-method legend{font-size:14px;font-weight:600;margin-bottom:8px}
+.verification-method label{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid #dce7e2;border-radius:10px;flex:1 1 150px;min-width:0;cursor:pointer}.verification-method label:has(input:checked){background:#edf8f3;border-color:#0f776e}
+.verification-method input{width:16px;min-height:0;height:16px;flex-shrink:0;accent-color:#0f776e}.verification-method small{display:block;font-size:11px;font-weight:400;color:#52677c}.verification-method .icon{flex-shrink:0}
+.verification-notice{border:1px solid #ead9b0;background:#fff8e9;border-radius:10px;padding:12px;color:#72591e}.verification-reference{padding:12px;background:#f3f7f5;border-radius:10px;display:grid;gap:4px}
+.verification-resend{border-top:1px solid #e1e9e6;margin-top:22px;padding:18px 0 8px}.verification-resend summary{color:#0f776e;font-size:14px;font-weight:600;cursor:pointer}.verification-resend form{margin-top:14px}
+.verification-footer{font-size:12px;text-align:center;color:#52677c;margin:20px 0 0;line-height:1.8}.verification-footer a{color:#0f776e}.verification-card .btn-text{border:0;background:transparent;color:#0f776e;padding:10px 0;min-height:44px}
+.quote-verified{max-width:860px;border:1px solid #cce5d9;background:#edf8f2;border-radius:12px;margin-top:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;flex-wrap:wrap}.quote-verified p{margin:0;overflow-wrap:anywhere;font-size:14px}.quote-verified strong{display:block;color:#176454}
+@media(max-width:480px){.verification-page{padding:28px 14px 40px}.verification-heading{margin-bottom:20px}.verification-card{border-radius:14px}.verification-progress{font-size:11px;gap:6px}.verification-progress li{padding:9px 5px}.verification-method label{flex-basis:120px;padding:10px;gap:8px}}

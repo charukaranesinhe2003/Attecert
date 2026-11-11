@@ -66,6 +66,84 @@ The admin account is marked to change its password. The sample customer has case
 
 Staff marked to change a password must complete `/admin/password` before using other authenticated features. Password changes and resets invalidate older sessions. Deploying the session fingerprint check requires existing users to sign in again; it does not change their stored passwords.
 
+## Staff and Operations
+
+In **Staff & roles**, administrators can create staff with a role and temporary password, change roles or account status, reset another staff member's password, and delete staff. Staff change their own password from **Change password**. New and reset passwords must be changed at the next sign-in; resetting a password revokes existing sessions and reset links. Administrators cannot delete themselves or remove the last active super administrator. Only a super administrator can manage another super administrator.
+
+Quote-to-case conversion reuses existing customer records and preserves existing login credentials, roles, and account status. Emails reserved by deleted logins, or by archived customer profiles, can still receive a new contact-only customer record for case processing. Conversion does not restore deleted accounts or profiles, and it does not grant login access to those contacts. Their case-opening email links to public tracking instead of a sign-in page.
+
+Use **Assign staff** (`/admin/operations`) and its **Cases** and **Quote requests** tabs to search work, filter by assigned staff or unassigned records, and assign, reassign, or unassign work. Only active staff accounts can receive assignments. Deleting staff removes their login access and returns their cases and quote requests to the unassigned queue while preserving history. Quote-request assignments are independent of existing case assignments. Converting an unconverted request creates a case assigned to the request's assignee; opening an already converted request does not reassign its case.
+
+The `admin` and `super_admin` roles retain full case and quote-request access. All other staff roles, including manager and content editor, can access only their assigned cases and their related documents, quotations, invoices, payments, and processing details, plus quote requests assigned to them. Assigned staff can update request status, download submitted request attachments, and convert requests to cases. They cannot reassign work or access global customers, reports, website administration, staff management, settings, contacts, or email logs. Lists, searches, direct record links, and downloads enforce the same assignment policy. Staff without assignments have an empty workspace. These features use PHP controllers and forms. Run `php cli/migrate.php` when updating an existing installation to apply `004_quote_request_assignments.sql`.
+
+## Tracking management
+
+The default case page provides independent **Steps & status**, **Documents (optional)**, and **Payments** controls. Add or customize steps, set their progress, type any case-specific status (or choose a standard status), and upload/email customer documents from this page. Detailed service, processing, quotation, and historical finance controls remain under **Case details**. Custom status labels are scoped to their case. Automatic financial/process events preserve a manually chosen custom status. Reopening a closed case still requires confirmation and a reason.
+
+Every step supports an optional PDF/image, including pending, current, and completed steps. Save without a file to update progress, or add a file to an existing step without changing its status. Uploaded files remain associated with their step, are attached unchanged to the update email, and are available in the customer's authenticated documents. Every changed step queues a short SMS and a formatted email including previous progress. The case, customer account, public tracker, and update emails retain earlier status and step snapshots after edits or removal from the current plan. Public history excludes private messages, contact details, payment amounts, references, and file downloads.
+
+Payment confirmation accepts an optional **payment confirmation PDF**. Confirming without a file remains supported; a PDF can be added later without counting the payment again. The original PDF is saved, emailed to the customer, and used for receipt downloads. Confirmation PDFs are retained with the payment record. Apply `011_step_documents_payment_receipts.sql` with `php cli/migrate.php` when updating an existing installation.
+
+New cases receive a unique reference such as `KASS/Q/2026111101`: `KASS/Q/`, the date in Asia/Colombo, and a daily counter starting at `01`. The counter grows past `99` and is serialized in MySQL for concurrent requests. Existing and archived references stay reserved; existing tracking links keep working. Uploaded quotation PDFs remain unchanged.
+
+In **Payments**, add an amount, method, date, and optional reference. An invoice is optional. Entries remain **pending** until an administrator or the assigned staff member checks the funds and selects **Confirm received & notify**. Confirmation records who received the payment and when, makes a PDF receipt available, and queues a short SMS plus a formatted email summary. Pending entries can be cancelled. They do not count as received funds or invoice payments. Invoice-linked confirmations recheck the current balance under a lock. Repeated submissions or confirmations do not duplicate a payment or its notifications. Apply `010_simple_case_workflow.sql` using `php cli/migrate.php` on an existing installation.
+
+Use the **Tracking** navigation tab (`/admin/tracking`) to select a case, edit its public notice and expected date, and add, edit, order, or remove tracking steps. Each step has a public title and description, optional date and document, and pending/in-progress/completed state. Current steps appear alongside the complete previous progress history on `/track`. The public page shows destination, started/updated/expected dates, case status, notice, and the timeline. Private case notes, customer contact details, payment values, and document downloads are not included in anonymous tracking.
+
+Administrators can manage all cases; other staff can manage only cases assigned to them. Assignment checks also apply to direct URLs, step IDs, and document IDs. Every new or changed tracking step automatically queues a short SMS and a formatted detailed email. Saving identical values does not send duplicate notifications. Overall public case-status changes create SMS, email, and account notifications; backward or reopened statuses require a reason and confirmation. **Upload & email a document** attaches the original PDF/image and makes it available in the customer's authenticated documents. Existing customer/completed documents can also be emailed; internal files cannot be sent through this page. Delivery uses the existing mail outbox, SMTP settings, and mail worker. Missing SMTP is reported as saved-only. Apply migration `006_case_tracking.sql` with `php cli/migrate.php` when updating an installation.
+
+## Uploaded quotations
+
+Create quotations manually outside the app, then use **Quote requests → Upload & email quotation** on the relevant request, or the quotation tab under **Case details**. Upload a PDF and enter the exact quoted total and validity. The Documents tab lists saved files and does not include the quotation upload form. Request uploads are tied to the selected request and customer; only administrators and the request's assigned staff can open the request, upload its quotations, download them, or email them again. A new case is created when an unconverted request receives its first quotation. An existing case's assignment stays unchanged; request staff can manage the request's quotations without gaining access to unrelated case details. Case-based uploads retain their existing case-assignment checks. The original PDF is stored unchanged and is used for staff downloads, customer downloads, and email attachments. Uploading a revision retains earlier files and supersedes pending quotations. Quotation files are retained with their quotation history. Apply `007_request_quotations.sql` with `php cli/migrate.php` when updating an installation.
+
+The former quotation builder no longer creates quotations through the web app. Existing quotation records and downloads remain available. Acceptance and invoicing use the total entered by staff. Apply `005_uploaded_quotations.sql` using `php cli/migrate.php` when updating an existing installation. Email is queued through the mail worker described below; missing SMTP settings are reported rather than claiming delivery.
+
+## Quote requests and tracking verification
+
+Public quote requests and document tracking require OTP verification by default (`PUBLIC_OTP_REQUIRED=true` in `.env`). Guests can request quotations without creating an account: verify an email address or mobile number first, then complete the request using those verified contact details. A successful quote submission consumes its verification grant; another request requires verification again. Changing the verified contact requires another code.
+
+Tracking accepts a reference and sends a code only to the customer email/mobile already registered with that case. A posted email or phone cannot redirect delivery. No progress, document title, customer identity, or saved contact is shown before verification. Unknown references use the same generic response. Tracking grants last 30 minutes and are bound to the browser, purpose, case, and saved contact. Changing the saved contact invalidates access. Codes expire after 10 minutes, allow 5 attempts, and have a 60-second resend interval. Destination/session/IP limits also apply; resending invalidates older codes. Missing SMS/SMTP configuration never bypasses verification.
+
+Apply migration `012_public_action_otps.sql` with `php cli/migrate.php` and configure the existing SMSlenz/SMTP settings and notification worker below. OTP email/SMS delivery uses the same durable queues; expired OTP messages are discarded by the workers. Verification screens provide email/SMS selection, resend controls, code entry, unavailable-provider feedback, and responsive layouts.
+
+Step updates attach every customer-visible document linked to that step, including documents uploaded during earlier updates. The original filenames and bytes are frozen in the email outbox. Multiple attachments survive queued delivery and retries; missing or changed saved attachments fail instead of sending incomplete mail. Private and archived documents are excluded. Admin forms share consistent button sizes, spacing, file controls, typography, and responsive grids across mobile, tablet, and desktop layouts.
+
+## Customer OTP, SMSlenz, and notification delivery
+
+Customer OTP verification is enabled with `CUSTOMER_OTP_REQUIRED=true`. Customers must verify either their email or their mobile number before accessing the portal. Staff accounts are exempt. Existing customers also complete OTP once; an old email-verification flag alone does not bypass the new check. Codes last 10 minutes, allow 5 attempts, can be requested once every 60 seconds, and have a limit of 5 requests per account per hour. Codes are single-use and bound to the account, destination, and current password. Resending invalidates older codes. Changing an SMS-verified phone requires verification again unless the customer has verified through email. Missing delivery credentials never bypass verification.
+
+The operations menu is ordered **Assign staff → Quote requests → Cases → Tracking → Documents → Processing → Customers → Support messages**. The last four pages are admin-only, including direct URLs. Staff can still work on documents and processing within an assigned case; customer directories and unrelated customer information remain unavailable. Quote-request assignments continue to control request access separately from case assignments.
+
+The integration follows the [official SMSlenz Send SMS API](https://smslenz.lk/developers/api). Configure these server-side `.env` values using your real account details (the example credentials from chat are not used):
+
+```dotenv
+CUSTOMER_OTP_REQUIRED=true
+SMSLENZ_BASE_URL=https://smslenz.lk/api
+SMSLENZ_USER_ID=
+SMSLENZ_API_KEY=
+SMSLENZ_SENDER_ID=AtteCert
+SMSLENZ_TIMEOUT=15
+MAIL_HOST=
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS=your-custom-mailbox@example.com
+MAIL_FROM_NAME=AtteCert
+MAIL_TIMEOUT=30
+MAIL_MAX_ATTEMPTS=3
+```
+
+Use an approved SMSlenz sender ID, and enable PHP cURL. The worker sends JSON containing `user_id`, `api_key`, `sender_id`, `contact`, `message`, and `contact_name`; local Sri Lankan mobile numbers are normalized to international format. API keys stay in environment configuration and are not stored in message logs. Provider success is recorded only for a successful HTTP/JSON response with `success: true` and `data.status: success`. A provider acceptance is not a handset-delivery receipt. Rejected requests are recorded as failed. Ambiguous transport failures and interrupted deliveries are marked uncertain and are not automatically retried, to avoid duplicate charges/messages.
+
+Apply migrations with `php cli/migrate.php`. Schedule this single PHP command every minute, with the application as the working directory:
+
+```powershell
+C:\xampp\php\php.exe "F:\CHANDILA\AtteCert\Attecert\cli\notification-worker.php" --limit=20
+```
+
+This handles both the existing mail outbox and the SMS queue outside case-saving transactions. Separate `cli/mail-worker.php` and `cli/sms-worker.php` commands are also available. Expired OTP messages are not delivered. Messages blocked by missing SMS credentials are not silently sent later when credentials are added; new notifications use the configured service. Queued SMS contains customer messages and verification text, and saved email files may contain verification codes; protect the database and private storage accordingly. Neither codes nor credentials are returned in verification responses or repopulated into forms. Keep the app's `storage/` directory inaccessible from the web.
+
 ## Email
 
 SMTP is read only from the environment. Do not put mail passwords in source code.
@@ -98,7 +176,7 @@ English, Sinhala, and Tamil are included. Add another locale by creating `resour
 
 ## What the case connects
 
-A case number such as `ATT-2026-000001` is the centre of the workflow. It links the customer, destination, selected services, status history, quotation, invoice, payments, MOFA record, embassy record, and files. Fixed service prices are copied onto the quotation. Later price changes do not rewrite issued invoices.
+A case number such as `ATT-2026-000001` is the centre of the workflow. It links the customer, destination, selected services, status history, uploaded quotation, invoice, payments, MOFA record, embassy record, and files. Quotation totals are entered by staff to match their uploaded PDF. Later price changes do not rewrite issued invoices.
 
 Public tracking shows the case number, destination, visible status timeline, and next step. It does not show contact details, staff notes, payment values, or files. Downloads require the signed-in customer or an authorised staff user and are written to the download log.
 

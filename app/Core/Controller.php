@@ -6,6 +6,12 @@ namespace App\Core;
 
 abstract class Controller
 {
+    protected function requireAdmin(): void
+    {
+        if (!app(\App\Services\AuthService::class)->isAdmin()) {
+            throw new HttpException(403, 'This page is available only to administrators.');
+        }
+    }
     public function __construct(protected Validator $validator)
     {
     }

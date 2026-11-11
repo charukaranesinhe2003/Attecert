@@ -1,3 +1,4 @@
+<p><a class="btn btn-primary" href="<?= e(url('/admin/quote-requests')) ?>">Upload &amp; email quotation</a></p>
 <form class="filters" method="get">
     <label><span class="sr-only"><?= e(__('actions.search')) ?></span><input name="q" value="<?= e($q) ?>" placeholder="<?= e(__('actions.search')) ?>"></label>
     <label><span class="sr-only"><?= e(__('fields.status')) ?></span><select name="status"><option value=""><?= e(__('admin_overview.all_statuses')) ?></option><?php foreach (['draft','sent','viewed','accepted','rejected','expired','converted','superseded'] as $state): ?><option value="<?= e($state) ?>" <?= selected($status, $state) ?>><?= e($state) ?></option><?php endforeach; ?></select></label>

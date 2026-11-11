@@ -24,8 +24,10 @@ final class DocumentController extends Controller
 
     public function index(Request $request): Response
     {
+        $this->requireAdmin();
         $filters = $this->filters($request);
-        $sql = 'SELECT d.*, c.number AS case_number FROM documents d LEFT JOIN cases c ON c.id = d.case_id LEFT JOIN customers cu ON cu.id = c.customer_id WHERE d.deleted_at IS NULL AND (d.case_id IS NULL OR (c.id IS NOT NULL AND c.deleted_at IS NULL AND cu.id IS NOT NULL AND cu.deleted_at IS NULL))';
+        $sql = 'SELECT d.*, c.number AS case_number, q.id AS quotation_id, q.status AS quotation_status FROM documents d LEFT JOIN cases c ON c.id = d.case_id LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN quotations q ON q.uploaded_document_id = d.id WHERE d.deleted_at IS NULL AND (d.case_id IS NULL OR (c.id IS NOT NULL AND c.deleted_at IS NULL AND cu.id IS NOT NULL AND cu.deleted_at IS NULL))';
+        $sql .= ' AND ' . app(\App\Services\CaseAccessService::class)->scope('d.case_id');
         $params = [];
         if ($filters['case_id'] > 0) {
             $sql .= ' AND d.case_id = ?';
@@ -63,6 +65,7 @@ final class DocumentController extends Controller
 
     public function download(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('documents', (int) $id);
         $file = $this->documents->download((int) $id, null, (int) $this->auth->id(), true);
 
         return Response::download($file['path'], $file['name'], $file['mime']);
@@ -70,6 +73,7 @@ final class DocumentController extends Controller
 
     public function archive(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('documents', (int) $id);
         $this->validate($request, ['confirmed' => 'required|in:1']);
         $this->documents->archive((int) $id, (int) $this->auth->id());
         flash('success', __('admin.archived'));
@@ -79,6 +83,7 @@ final class DocumentController extends Controller
 
     public function visibility(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('documents', (int) $id);
         $data = $this->validate($request, ['customer_visible' => 'required|in:0,1', 'confirmed' => 'required|in:1']);
         $changed = $this->documents->setVisibility((int) $id, (int) $data['customer_visible'] === 1, (int) $this->auth->id());
         flash('success', $changed ? ((int) $data['customer_visible'] === 1 ? 'Document released to the customer.' : 'Document is now private.') : 'Document visibility is already up to date.');

@@ -1,0 +1,27 @@
+.case-workflow{display:grid;gap:1.25rem;max-width:1200px;width:100%;min-width:0;margin:auto}
+.case-workflow>*{min-width:0}
+.case-workflow h1,.case-workflow h2,.case-workflow h4{font-family:inherit}
+.workflow-hero h1{font-size:clamp(1.35rem,4vw,2rem);overflow-wrap:anywhere;margin:.25rem 0 .7rem}
+.workflow-hero>p{margin:.4rem 0}.workflow-hero .actions{margin-top:1rem}
+.workflow-nav{display:flex;gap:.65rem;flex-wrap:wrap;position:sticky;top:0;z-index:2;background:#f4f7f6;padding:.75rem 0}
+.workflow-nav a{padding:.65rem .9rem;background:#fff;border:1px solid #dce8e5;border-radius:10px;color:#0c7069;text-decoration:none;font-weight:700}
+.workflow-nav a:hover,.workflow-nav a:focus-visible{border-color:#0c7069;background:#e6f3ef}
+.workflow-section{scroll-margin-top:6rem}.workflow-section>h2{margin:0 0 1rem;font-size:1.35rem}
+.case-workflow .admin-grid{align-items:start;min-width:0;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr)}.case-workflow .admin-grid>*{min-width:0}.case-workflow h3{margin-top:0}
+.case-workflow input,.case-workflow textarea,.case-workflow select{min-width:0;max-width:100%}
+.case-workflow details{padding:.8rem 0}.case-workflow summary{cursor:pointer;font-weight:700;color:#0c7069;line-height:1.6}
+.case-workflow details>form{margin-top:1rem}.workflow-summary{border-top:1px solid #dce8e5;margin-top:1.25rem}
+.workflow-step-list{list-style:none;margin:1.25rem 0;padding:0;border-left:2px solid #c6dcd6}
+.workflow-step{position:relative;padding:0 0 1.2rem 1.25rem;margin-left:0;overflow-wrap:anywhere}
+.workflow-step:before{content:'';position:absolute;width:12px;height:12px;background:#cad8d4;border:3px solid #fff;border-radius:50%;left:-10px;top:3px}
+.workflow-step.current:before{background:#d19b2f}.workflow-step.completed:before{background:#0c8073}
+.workflow-step h4{font-size:1rem;margin:0 0 .4rem}.workflow-step p{margin:.35rem 0}
+.workflow-documents{padding:0;list-style:none}.workflow-documents li,.workflow-payment{border-top:1px solid #e1e9e7;padding:1.1rem 0}
+.workflow-documents li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:1rem;overflow-wrap:anywhere}
+.workflow-documents p{margin:.25rem 0}.workflow-totals{display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:1rem}
+.workflow-totals p{background:#edf5f2;border-radius:10px;padding:1rem;margin:0;flex:1;min-width:210px}
+.workflow-totals strong{display:block;font-size:1.35rem;margin-top:.35rem}.workflow-payment .stack{max-width:36rem}
+@media(max-width:1000px){.case-workflow .admin-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:640px){.case-workflow{gap:1rem}.workflow-nav{position:static}.workflow-nav a{flex:1 1 90px;min-width:0;text-align:center}.workflow-documents .actions{width:100%}.workflow-section{scroll-margin-top:1rem}}
+.case-workflow .progress-history{overflow-wrap:anywhere}.case-workflow .progress-history p{margin:.35rem 0}
+.case-workflow .step-documents{padding-left:1rem;overflow-wrap:anywhere}

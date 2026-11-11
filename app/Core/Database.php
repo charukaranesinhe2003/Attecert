@@ -10,6 +10,7 @@ use PDOStatement;
 final class Database
 {
     private PDO $pdo;
+    private int $savepointCounter = 0;
 
     public function __construct()
     {
@@ -73,19 +74,27 @@ final class Database
     public function transaction(callable $callback): mixed
     {
         $owns = !$this->pdo->inTransaction();
+        $savepoint = 'attecert_tx_' . ++$this->savepointCounter;
         if ($owns) {
             $this->pdo->beginTransaction();
+        } else {
+            $this->pdo->exec('SAVEPOINT ' . $savepoint);
         }
         try {
             $result = $callback($this);
             if ($owns) {
                 $this->pdo->commit();
+            } else {
+                $this->pdo->exec('RELEASE SAVEPOINT ' . $savepoint);
             }
 
             return $result;
         } catch (\Throwable $exception) {
             if ($owns && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
+            } elseif ($this->pdo->inTransaction()) {
+                $this->pdo->exec('ROLLBACK TO SAVEPOINT ' . $savepoint);
+                $this->pdo->exec('RELEASE SAVEPOINT ' . $savepoint);
             }
             throw $exception;
         }

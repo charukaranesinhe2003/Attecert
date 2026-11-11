@@ -19,9 +19,9 @@ use ReflectionProperty;
 
 final class AdminAccessibilityTest extends DatabaseTestCase
 {
-    public function testCaseTabsHaveLinkedPanelsAndOneKeyboardEntryPoint(): void
+    public function testOptionalCaseDetailsTabsHaveLinkedPanelsAndOneKeyboardEntryPoint(): void
     {
-        $html = $this->html(app(CaseController::class)->show($this->get('/admin/cases/' . $this->caseId), (string) $this->caseId));
+        $html = $this->html(app(CaseController::class)->details($this->get('/admin/cases/' . $this->caseId . '/details'), (string) $this->caseId));
         $xpath = $this->xpath($html);
         $this->assertSame(1, $xpath->query('//*[@data-case-tabs and @role="tablist" and string-length(@aria-label)>0]')->length);
         $tabs = $xpath->query('//*[@data-case-tabs]/*[@role="tab"]');
@@ -50,9 +50,8 @@ final class AdminAccessibilityTest extends DatabaseTestCase
         $this->assertGreaterThanOrEqual(1, $xpath->query('//details/summary[contains(., "Accessible document.pdf")]')->length);
         $this->assertSame(1, $xpath->query('//form[contains(@action,"/admin/documents/' . $id . '/visibility")]//input[@name="confirmed" and @required]')->length);
         $this->signInAsRole('finance_staff');
-        $restricted = $this->html(app(DocumentController::class)->index($this->get('/admin/documents')));
-        $this->assertStringNotContainsString('/admin/documents/' . $id . '/visibility', $restricted);
-        $this->assertStringNotContainsString('/admin/documents/' . $id . '/archive', $restricted);
+        $this->expectException(\App\Core\HttpException::class);
+        app(DocumentController::class)->index($this->get('/admin/documents'));
     }
 
     public function testReportDateErrorsAreLinkedAndOutstandingTableHasHeaders(): void
@@ -97,7 +96,7 @@ final class AdminAccessibilityTest extends DatabaseTestCase
         }
     }
 
-    public function testInvoiceDoesNotRestoreOtherInvoiceDataOrExposeUnauthorizedForms(): void
+    public function testInvoiceDoesNotRestoreOtherInvoiceDataAndAssignedStaffCanManagePayments(): void
     {
         $id = $this->invoice();
         $_SESSION['_view_old'] = ['_formkind' => 'refund', 'invoice_id' => $id + 1, 'reference' => 'Other invoice reference'];
@@ -105,11 +104,12 @@ final class AdminAccessibilityTest extends DatabaseTestCase
         $html = $this->html(app(InvoiceController::class)->show($this->get('/admin/invoices/' . $id), (string) $id));
         $this->assertStringNotContainsString('Other invoice reference', $html);
         $this->assertStringNotContainsString('Other invoice error', $html);
-        $this->signInAsRole('processing_staff');
+        $staff = $this->signInAsRole('processing_staff');
+        $this->db->run('UPDATE cases SET assigned_to = ? WHERE id = ?', [$staff, $this->caseId]);
         $restricted = $this->html(app(InvoiceController::class)->show($this->get('/admin/invoices/' . $id), (string) $id));
-        $this->assertStringNotContainsString('id="invoice-payment"', $restricted);
-        $this->assertStringNotContainsString('id="invoice-refund"', $restricted);
-        $this->assertStringNotContainsString('/admin/invoices/' . $id . '/send', $restricted);
+        $this->assertStringContainsString('id="invoice-payment"', $restricted);
+        $this->assertStringContainsString('id="invoice-refund"', $restricted);
+        $this->assertStringContainsString('/admin/invoices/' . $id . '/send', $restricted);
     }
 
     private function invoice(): int

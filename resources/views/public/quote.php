@@ -1,9 +1,10 @@
 <section class="page-hero"><div class="container"><h1><?= e(__('quote.title')) ?></h1><p class="lead"><?= e(content_block('quote_lead')) ?></p></div></section>
+<?php if (!empty($verifiedContact)): ?><div class="container quote-verified"><p><strong>Contact verified</strong> <?= e($verifiedContact['email']) ?> · <?= e($verifiedContact['phone']) ?></p><form method="post" action="<?= e(url('/quote/verification/reset')) ?>"><?= csrf_field() ?><button class="btn btn-ghost" type="submit">Change contact</button></form></div><?php endif; ?>
 <section class="section"><div class="container" style="max-width:860px"><form class="panel stack" method="post" action="<?= e(url('/quote')) ?>" enctype="multipart/form-data"><?= csrf_field() ?>
 <div class="form-grid">
-<label><?= e(__('fields.name')) ?><input name="name" value="<?= e((string) old('name')) ?>" required></label>
-<label><?= e(__('fields.phone')) ?><input name="phone" value="<?= e((string) old('phone')) ?>" required></label>
-<label><?= e(__('fields.email')) ?><input type="email" name="email" value="<?= e((string) old('email')) ?>" required></label>
+<label><?= e(__('fields.name')) ?><input name="name" value="<?= e((string) ($verifiedContact['name'] ?? old('name'))) ?>"<?= !empty($verifiedContact) ? ' readonly' : '' ?> required></label>
+<label><?= e(__('fields.phone')) ?><input name="phone" value="<?= e((string) ($verifiedContact['phone'] ?? old('phone'))) ?>"<?= !empty($verifiedContact) ? ' readonly' : '' ?> required></label>
+<label><?= e(__('fields.email')) ?><input type="email" name="email" value="<?= e((string) ($verifiedContact['email'] ?? old('email'))) ?>"<?= !empty($verifiedContact) ? ' readonly' : '' ?> required></label>
 <label><?= e(__('fields.whatsapp')) ?><input name="whatsapp" value="<?= e((string) old('whatsapp')) ?>"></label>
 <label><?= e(__('fields.document_type_id')) ?><select name="document_type_id"><option value=""><?= e(__('quote.choose')) ?></option><?php foreach ($documentTypes as $type): ?><option value="<?= e((string) $type['id']) ?>"><?= e($type['name']) ?></option><?php endforeach; ?></select></label>
 <label><?= e(__('fields.country_id')) ?><select name="country_id"><option value=""><?= e(__('quote.choose')) ?></option><?php foreach ($countries as $country): ?><option value="<?= e((string) $country['id']) ?>"><?= e($country['name']) ?></option><?php endforeach; ?></select></label>

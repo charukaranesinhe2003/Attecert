@@ -16,9 +16,10 @@
     <td data-label="<?= e(__('admin_polish.document')) ?>"><strong><?= e($row['original_name']) ?></strong><br><?= e((string) $row['description']) ?><br><?= e(format_datetime($row['created_at'])) ?></td>
     <td data-label="<?= e(__('admin_polish.case')) ?>"><?php if ($canViewCase && $row['case_id']): ?><a href="<?= e(url('/admin/cases/' . $row['case_id'] . '#documents')) ?>"><?= e((string) $row['case_number']) ?></a><?php else: ?><?= e((string) ($row['case_number'] ?: __('admin_polish.enquiry_attachment'))) ?><?php endif; ?></td>
     <td data-label="<?= e(__('admin_polish.category')) ?>"><?= e(__('admin_polish.category_' . $row['category'])) ?></td>
-    <td data-label="<?= e(__('admin_polish.visibility')) ?>"><?= status_badge(__( (int) $row['customer_visible'] === 1 ? 'admin_polish.visible' : 'admin_polish.private'), (int) $row['customer_visible'] === 1 ? 'success' : 'warning') ?></td>
+    <td data-label="<?= e(__('admin_polish.visibility')) ?>"><?php if ($row['quotation_id']): ?><?= status_badge('Quotation: ' . $row['quotation_status'], 'neutral') ?><?php else: ?><?= status_badge(__( (int) $row['customer_visible'] === 1 ? 'admin_polish.visible' : 'admin_polish.private'), (int) $row['customer_visible'] === 1 ? 'success' : 'warning') ?><?php endif; ?></td>
     <td data-label="<?= e(__('admin_polish.actions')) ?>">
         <a class="btn btn-ghost" href="<?= e(url('/admin/documents/' . $row['id'] . '/download')) ?>"><?= e(__('actions.download')) ?><span class="sr-only"> <?= e($row['original_name']) ?></span></a>
+        <?php if ($row['quotation_id']): ?><a class="btn btn-ghost" href="<?= e(url('/admin/quotations/' . $row['quotation_id'])) ?>">View quotation</a><?php endif; ?>
         <?php if ($canRelease && $row['category'] === 'completed' && $row['case_id']): $release = (int) $row['customer_visible'] !== 1; ?>
         <details><summary><?= e(__( $release ? 'admin_polish.review_release' : 'admin_polish.make_private')) ?><span class="sr-only"> <?= e($row['original_name']) ?></span></summary>
             <form class="stack" method="post" action="<?= e(url('/admin/documents/' . $row['id'] . '/visibility')) ?>">
@@ -31,7 +32,7 @@
             </form>
         </details>
         <?php endif; ?>
-        <?php if ($canArchive): ?>
+        <?php if ($canArchive && !$row['quotation_id']): ?>
         <details><summary><?= e(__('actions.archive')) ?><span class="sr-only"> <?= e($row['original_name']) ?></span></summary>
             <form class="stack" method="post" action="<?= e(url('/admin/documents/' . $row['id'] . '/archive')) ?>">
                 <?= csrf_field() ?>

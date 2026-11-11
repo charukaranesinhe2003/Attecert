@@ -27,6 +27,7 @@ final class InvoiceController extends Controller
         $q = trim((string) $request->query('q', ''));
         $status = (string) $request->query('status', '');
         $sql = 'SELECT i.*, c.number AS case_number, cu.name AS customer_name FROM invoices i INNER JOIN cases c ON c.id = i.case_id INNER JOIN customers cu ON cu.id = i.customer_id WHERE c.deleted_at IS NULL AND cu.deleted_at IS NULL';
+        $sql .= ' AND ' . app(\App\Services\CaseAccessService::class)->scope('i.case_id');
         $params = [];
         if ($q !== '') {
             $sql .= ' AND (i.number LIKE ? OR c.number LIKE ? OR cu.name LIKE ?)';
@@ -55,6 +56,7 @@ final class InvoiceController extends Controller
 
     public function show(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('invoices', (int) $id);
         return $this->view('admin/invoices/show', [
             'title' => __('admin.invoices'),
             'robots' => 'noindex',
@@ -65,6 +67,7 @@ final class InvoiceController extends Controller
 
     public function pdf(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('invoices', (int) $id);
         $bundle = $this->invoices->bundle((int) $id);
 
         return Response::download($this->invoices->pdfPath((int) $id), $bundle['invoice']['number'] . '.pdf', 'application/pdf');
@@ -72,6 +75,7 @@ final class InvoiceController extends Controller
 
     public function send(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('invoices', (int) $id);
         $result = $this->invoices->send((int) $id, (int) $this->auth->id());
         flash_mail_result($result);
         $invoice = $this->db->fetch('SELECT case_id FROM invoices WHERE id = ?', [(int) $id]);
@@ -84,6 +88,7 @@ final class InvoiceController extends Controller
 
     public function cancel(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('invoices', (int) $id);
         $data = $this->validate($request, ['reason' => 'required|max:255']);
         try {
             $this->invoices->cancel((int) $id, (int) $this->auth->id(), $data['reason']);

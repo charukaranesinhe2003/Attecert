@@ -53,7 +53,7 @@ return array_replace_recursive([
         'previous' => 'Previous', 'next' => 'Next', 'pagination' => 'Pagination',
         'new' => 'New', 'contacted' => 'Contacted', 'converted' => 'Converted to case', 'closed' => 'Closed', 'spam' => 'Spam',
         'cash' => 'Cash', 'bank_transfer' => 'Bank transfer', 'card' => 'Card', 'online' => 'Online', 'other' => 'Other', 'refund' => 'Refund',
-        'completed' => 'Completed', 'refunded' => 'Refunded', 'failed' => 'Failed', 'queued' => 'Queued', 'sent' => 'Sent', 'logged' => 'Logged only',
+        'completed' => 'Completed', 'pending' => 'Pending', 'cancelled' => 'Cancelled', 'refunded' => 'Refunded', 'failed' => 'Failed', 'queued' => 'Queued', 'sent' => 'Sent', 'logged' => 'Logged only',
         'translations' => 'Interface translations', 'language' => 'Language', 'default' => 'Default text',
         'override' => 'Custom text', 'reset' => 'Reset this language', 'reset_confirm' => 'Remove this custom text and restore the default?',
         'translation_hint' => 'Leave a value unchanged to keep its custom text. Reset a language to restore its default.',

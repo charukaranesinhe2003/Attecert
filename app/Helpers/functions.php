@@ -223,13 +223,16 @@ function flash_mail_result(array $result, ?string $savedMessage = null): void
     if (in_array($result['status'], ['sent', 'queued'], true)) {
         $delivery = $result['status'] === 'sent' ? __('admin.email_sent') : __('admin_feedback.queued');
         flash('success', trim(($savedMessage ?? '') . ' ' . $delivery));
-
-        return;
+    } else {
+        if ($savedMessage !== null) { flash('success', $savedMessage); }
+        flash('error', (string) ($result['error'] ?? __('admin.smtp_missing')));
     }
-    if ($savedMessage !== null) {
-        flash('success', $savedMessage);
+    if (isset($result['sms']) && !in_array($result['sms']['status'], ['queued', 'sent'], true)) {
+        $message = ($result['sms']['error_code'] ?? '') === 'invalid_phone'
+            ? 'SMS was not queued: the customer needs a valid mobile number.' : 'SMS was not queued: SMSlenz is not configured.';
+        $prior = $_SESSION['_flash']['error'] ?? '';
+        flash('error', trim($prior . ' ' . $message));
     }
-    flash('error', (string) ($result['error'] ?? __('admin.smtp_missing')));
 }
 
 function setting(string $key, mixed $default = null): mixed

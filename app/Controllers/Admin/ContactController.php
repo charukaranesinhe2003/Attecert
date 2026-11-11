@@ -21,6 +21,7 @@ final class ContactController extends Controller
 
     public function index(Request $request): Response
     {
+        $this->requireAdmin();
         $source = is_string($request->query('source')) ? $request->query('source') : 'all';
         $q = mb_substr(trim(is_string($request->query('q')) ? $request->query('q') : ''), 0, 190);
         $status = is_string($request->query('status')) ? $request->query('status') : '';
@@ -57,6 +58,7 @@ final class ContactController extends Controller
 
     public function status(Request $request, string $id): Response
     {
+        $this->requireAdmin();
         $data = $this->validate($request, ['status' => 'required|in:new,contacted,closed,spam']);
         $this->db->transaction(function () use ($data, $id): void {
             $message = $this->db->fetch('SELECT id, status FROM contact_messages WHERE id = ? FOR UPDATE', [(int) $id]);

@@ -14,7 +14,6 @@ use App\Services\AuthService;
 use App\Services\CaseService;
 use App\Services\CatalogService;
 use App\Services\DocumentService;
-use App\Services\QuotationService;
 use App\Services\WorkflowService;
 
 final class CaseController extends Controller
@@ -26,7 +25,6 @@ final class CaseController extends Controller
         private CatalogService $catalog,
         private WorkflowService $workflow,
         private DocumentService $documents,
-        private QuotationService $quotations,
         private AuthService $auth
     ) {
         parent::__construct($validator);
@@ -38,9 +36,9 @@ final class CaseController extends Controller
             'title' => __('admin.cases'),
             'robots' => 'noindex',
             'active' => 'cases',
-            'pageHeading' => __('admin.cases'),
-            'pageDescription' => __('admin.cases_hint'),
-            'pageAction' => '<a class="btn btn-primary" href="' . e(url('/admin/cases/create')) . '">+ ' . e(__('admin.new_case')) . '</a>',
+            'pageHeading' => $this->auth->isRestrictedStaff() ? 'My assigned cases' : __('admin.cases'),
+            'pageDescription' => $this->auth->isRestrictedStaff() ? 'You can manage all details of cases assigned to you. Contact an administrator for new assignments.' : __('admin.cases_hint'),
+            'pageAction' => $this->auth->can('cases.create') ? '<a class="btn btn-primary" href="' . e(url('/admin/cases/create')) . '">+ ' . e(__('admin.new_case')) . '</a>' : '',
             'filters' => [
                 'q' => trim((string) $request->query('q', '')),
                 'status' => (string) $request->query('status', ''),
@@ -66,7 +64,7 @@ final class CaseController extends Controller
             'countries' => $this->catalog->countries(false),
             'services' => $this->catalog->services(false),
             'documentTypes' => $this->catalog->documentTypes(),
-            'staff' => $this->db->fetchAll('SELECT u.id, u.name FROM users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id WHERE r.code <> \'customer\' AND u.deleted_at IS NULL GROUP BY u.id, u.name ORDER BY u.name'),
+            'staff' => app(\App\Services\CaseAccessService::class)->staff(),
         ], 'layouts/admin');
     }
 
@@ -78,7 +76,7 @@ final class CaseController extends Controller
             'country_id' => 'nullable|numeric',
             'document_type_id' => 'nullable|numeric',
             'summary' => 'nullable|max:4000',
-            'assigned_to' => 'nullable|numeric',
+            'assigned_to' => 'nullable|integer|min:1',
         ]);
         $lines = [];
         foreach ((array) $request->input('service_id', []) as $serviceId) {
@@ -93,6 +91,21 @@ final class CaseController extends Controller
     public function show(Request $request, string $id): Response
     {
         $case = $this->cases->find((int) $id);
+        if ($case === null) { throw new HttpException(404); }
+        return $this->view('admin/cases/workflow', [
+            'title' => $case['number'], 'robots' => 'noindex', 'active' => 'cases', 'hidePageHeader' => true,
+            'case' => $case, 'statuses' => $this->workflow->statuses(),
+            'steps' => $this->auth->can('cases.edit') ? app(\App\Services\TrackingService::class)->steps((int) $id) : [],
+            'payments' => $this->auth->can('payments.view') ? $this->db->fetchAll('SELECT * FROM payments WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [],
+            'invoices' => $this->auth->can('invoices.create') ? $this->db->fetchAll('SELECT * FROM invoices WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [],
+            'quotations' => $this->auth->can('quotations.create') ? $this->db->fetchAll('SELECT id, number, status FROM quotations WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [],
+            'documents' => $this->auth->can('documents.download') ? $this->documents->forCase((int) $id) : [],
+        ], 'layouts/admin');
+    }
+
+    public function details(Request $request, string $id): Response
+    {
+        $case = $this->cases->find((int) $id);
         if ($case === null) {
             throw new HttpException(404);
         }
@@ -101,7 +114,6 @@ final class CaseController extends Controller
         $canInvoice = $this->auth->can('invoices.create');
         $canPayment = $this->auth->can('payments.view');
         $quotations = $canQuote ? $this->db->fetchAll('SELECT * FROM quotations WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [];
-        $quotationItems = $quotations === [] ? [] : $this->db->fetchAll('SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY id', [(int) $quotations[0]['id']]);
         $invoices = $canInvoice ? $this->db->fetchAll('SELECT * FROM invoices WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [];
         $payments = $canPayment ? $this->db->fetchAll('SELECT * FROM payments WHERE case_id = ? ORDER BY id DESC', [(int) $id]) : [];
         $documents = $this->auth->can('documents.download') ? $this->documents->forCase((int) $case['id']) : [];
@@ -120,7 +132,6 @@ final class CaseController extends Controller
             'documentTypes' => $this->catalog->documentTypes(),
             'documents' => $documents,
             'quotations' => $quotations,
-            'quotationItems' => $quotationItems,
             'invoices' => $invoices,
             'payments' => $payments,
             'mofa' => $mofa,
@@ -129,7 +140,7 @@ final class CaseController extends Controller
                 ? NextStep::forCase($case, $quotations, $invoices, $mofa, $embassy)
                 : ['label' => 'Review the case history and use the actions available to your role.', 'tab' => 'overview'],
             'activity' => $this->activityTimeline((int) $id, $case, $documents, $quotations, $invoices, $payments),
-            'staff' => $this->db->fetchAll('SELECT u.id, u.name FROM users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id WHERE r.code <> \'customer\' AND u.deleted_at IS NULL GROUP BY u.id, u.name'),
+            'staff' => $this->auth->isAdmin() ? app(\App\Services\CaseAccessService::class)->staff() : [],
         ], 'layouts/admin');
     }
 
@@ -189,16 +200,26 @@ final class CaseController extends Controller
 
     public function update(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
         $data = $this->validate($request, [
             'document_title' => 'required|min:2|max:180',
             'country_id' => 'nullable|numeric',
             'document_type_id' => 'nullable|numeric',
             'summary' => 'nullable|max:4000',
-            'assigned_to' => 'nullable|numeric',
+            'assigned_to' => 'nullable|integer|min:1',
             'estimated_next' => 'nullable|max:180',
             'internal_notes' => 'nullable|max:5000',
             'customer_notes' => 'nullable|max:5000',
         ]);
+        if ($this->auth->isRestrictedStaff()) {
+            if ($request->input('assigned_to') !== null) {
+                $case = app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
+                if ((int) $request->input('assigned_to') !== (int) $case['assigned_to']) {
+                    throw new HttpException(403, 'Only administrators can reassign cases.');
+                }
+            }
+            unset($data['assigned_to']);
+        }
         $this->cases->updateDetails((int) $id, $data, (int) $this->auth->id());
         flash('success', __('admin.saved'));
 
@@ -207,6 +228,7 @@ final class CaseController extends Controller
 
     public function status(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
         $data = $this->validate($request, [
             'status' => 'required|max:40',
             'notes' => 'nullable|max:2000',
@@ -224,6 +246,7 @@ final class CaseController extends Controller
 
     public function services(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
         $quantities = (array) $request->input('quantity', []);
         $prices = (array) $request->input('unit_price', []);
         $lines = [];
@@ -242,81 +265,13 @@ final class CaseController extends Controller
 
     public function quotation(Request $request, string $id): Response
     {
-        if (($request->input('issue') || $request->input('email')) && !$this->auth->can('quotations.approve')) {
-            throw new HttpException(403, 'Issuing a quotation requires approval permission.');
-        }
-        $lines = [];
-        foreach ((array) $request->input('lines', []) as $serviceId => $line) {
-            if (empty($line['selected'])) {
-                continue;
-            }
-            $lines[] = [
-                'service_id' => (int) $serviceId,
-                'quantity' => $line['qty'] ?? 1,
-                'unit_price' => $line['price'] ?? 0,
-                'description' => $line['description'] ?? '',
-            ];
-        }
-        if (trim((string) $request->input('extra_description', '')) !== '') {
-            $lines[] = [
-                'service_id' => null,
-                'quantity' => $request->input('extra_qty', 1),
-                'unit_price' => $request->input('extra_price', 0),
-                'description' => (string) $request->input('extra_description'),
-                'pricing_type' => 'custom',
-            ];
-        }
-        foreach ((array) $request->input('custom_lines', []) as $line) {
-            if (!is_array($line) || trim((string) ($line['description'] ?? '')) === '') {
-                continue;
-            }
-            $lines[] = [
-                'service_id' => null,
-                'quantity' => $line['quantity'] ?? 1,
-                'unit_price' => $line['unit_price'] ?? 0,
-                'description' => trim((string) $line['description']),
-                'pricing_type' => 'custom',
-            ];
-        }
-        try {
-            $quotationId = $this->quotations->save((int) $id, [
-                'quotation_id' => (int) $request->input('quotation_id', 0),
-                'lines' => $lines,
-                'discount_amount' => (string) $request->input('discount_amount', '0'),
-                'tax_rate' => (string) $request->input('tax_rate', '0'),
-                'additional_amount' => (string) $request->input('additional_amount', '0'),
-                'notes' => (string) $request->input('notes', ''),
-                'terms' => (string) $request->input('terms', ''),
-                'validity_days' => $request->input('validity_days', setting('quote_validity_days', 14)),
-            ], (int) $this->auth->id(), (bool) $request->input('issue'), $this->auth->can('quotations.approve'));
-            if ($request->input('email')) {
-                if (!$this->auth->can('quotations.send')) {
-                    flash('error', __('admin.email_forbidden'));
-                } else {
-                    $mail = $this->quotations->send($quotationId, (int) $this->auth->id());
-                    flash_mail_result($mail, __('admin.quotation_saved'));
-                }
-            } else {
-                flash('success', __('admin.quotation_saved'));
-            }
-
-            return $this->redirect('/admin/cases/' . $id . '#quote');
-        } catch (\Throwable $exception) {
-            if ($exception instanceof \App\Core\ValidationException) {
-                $_SESSION['_errors'] = $exception->errors();
-                flash('error', implode(' ', $exception->errors()));
-            } else {
-                flash('error', $exception->getMessage());
-            }
-            $_SESSION['_old'] = $request->all();
-            unset($_SESSION['_old']['_token']);
-
-            return $this->redirect('/admin/cases/' . $id . '#quote');
-        }
+        // The former builder endpoint now requires an uploaded quotation PDF.
+        return app(QuotationController::class)->uploadForCase($request, (int) $id);
     }
 
     public function upload(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireCase((int) $id);
         $file = $request->file('document');
         if ($file === null) {
             flash('error', __('documents.upload_failed'));

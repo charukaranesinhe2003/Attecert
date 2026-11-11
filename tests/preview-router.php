@@ -25,6 +25,12 @@ $items['database']['database'] = $database;
 $items['app']['storage_path'] = (string) getenv('ATTECERT_PREVIEW_STORAGE');
 $items['app']['url'] = 'http://127.0.0.1:8091';
 $items['mail']['host'] = '';
+// Opt-in HTTP QA: queue fixture notifications only; no delivery worker runs in preview.
+if (getenv('ATTECERT_PREVIEW_NOTIFICATIONS') === '1') {
+    $items['mail']['host'] = '127.0.0.1';
+    $items['mail']['from_address'] = 'fixture@example.test';
+    $items['sms'] = ['base_url' => 'http://127.0.0.1:1/api', 'user_id' => 'fixture-user', 'api_key' => 'fixture-key', 'sender_id' => 'AtteCert', 'timeout' => 2];
+}
 $property->setValue(null, $items);
 header('X-Frame-Options: SAMEORIGIN');
 header('X-Content-Type-Options: nosniff');

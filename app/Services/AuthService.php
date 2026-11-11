@@ -73,6 +73,22 @@ final class AuthService
         if ($user === null) {
             return false;
         }
+        if ($permission === 'operations.manage') {
+            return $this->isAdmin();
+        }
+        if ($permission === 'admin.only') { return $this->isAdmin(); }
+        if ($permission === 'quote_requests.manage') {
+            return $this->isRestrictedStaff() || $this->can('quotes.manage');
+        }
+        if ($this->isRestrictedStaff()) {
+            return in_array($permission, [
+                'cases.view', 'cases.edit', 'cases.status_update',
+                'documents.upload', 'documents.download', 'documents.delete',
+                'quotations.create', 'quotations.approve', 'quotations.send',
+                'invoices.create', 'invoices.send', 'invoices.cancel',
+                'payments.create', 'payments.view',
+            ], true);
+        }
         if (in_array('super_admin', $user['roles'], true)) {
             return true;
         }
@@ -89,6 +105,16 @@ final class AuthService
         }
 
         return in_array($permission, $this->permissions, true);
+    }
+
+    public function isAdmin(): bool
+    {
+        return array_intersect($this->user()['roles'] ?? [], ['admin', 'super_admin']) !== [];
+    }
+
+    public function isRestrictedStaff(): bool
+    {
+        return $this->isStaff() && !$this->isAdmin();
     }
 
     public function isStaff(): bool
@@ -125,7 +151,29 @@ final class AuthService
 
     public function homePath(): string
     {
+        if ($this->needsVerification()) { return '/verify-customer'; }
         return $this->isStaff() ? ($this->mustChangePassword() ? '/admin/password' : '/admin') : '/account';
+    }
+
+    public function needsVerification(): bool
+    {
+        $user = $this->user();
+        if ($user === null || $this->isStaff() || !config('verification.required', true)) { return false; }
+        if (empty($user['otp_verified_at'])) { return true; }
+        if (($user['otp_verified_channel'] ?? '') === 'email') {
+            return $user['email_verified_at'] === null || $user['otp_verified_destination'] !== $user['email'];
+        }
+        return empty($user['phone_verified_at']) || empty($user['verified_phone'])
+            || SmslenzClient::normalizePhone($user['phone']) !== $user['verified_phone']
+            || $user['otp_verified_destination'] !== $user['verified_phone'];
+    }
+
+    public function refreshUser(): void
+    {
+        $this->loaded = false;
+        $this->user = null;
+        $this->customerLoaded = false;
+        $this->customer = null;
     }
 
     public function mustChangePassword(): bool
@@ -161,7 +209,7 @@ final class AuthService
         if ($user['locked_until'] !== null && strtotime((string) $user['locked_until']) > time()) {
             return ['ok' => false, 'error' => __('auth.throttled')];
         }
-        if ((string) setting('email_verification', '0') === '1' && $user['email_verified_at'] === null && !$this->userIsStaffId((int) $user['id'])) {
+        if (!config('verification.required', true) && (string) setting('email_verification', '0') === '1' && $user['email_verified_at'] === null && !$this->userIsStaffId((int) $user['id'])) {
             return ['ok' => false, 'error' => __('auth.unverified')];
         }
         session_regenerate_id(true);
@@ -207,7 +255,8 @@ final class AuthService
         }
 
         return $this->db->transaction(function () use ($name, $email, $phone, $password, $locale): int {
-            $verify = (string) setting('email_verification', '0') === '1';
+            $otp = (bool) config('verification.required', true);
+            $verify = $otp || (string) setting('email_verification', '0') === '1';
             $userId = $this->db->insert(
                 'INSERT INTO users (name, email, phone, password_hash, locale, email_verified_at) VALUES (?, ?, ?, ?, ?, ?)',
                 [$name, $email, $phone !== '' ? $phone : null, \App\Helpers\Password::hash($password), $locale, $verify ? null : date('Y-m-d H:i:s')]
@@ -218,7 +267,7 @@ final class AuthService
                 'INSERT INTO customers (user_id, name, email, phone) VALUES (?, ?, ?, ?)',
                 [$userId, $name, $email, $phone !== '' ? $phone : null]
             );
-            if ($verify) {
+            if ($verify && !$otp) {
                 $this->sendToken($email, 'verify', '/verify-email/', 'verify', __('mail.verify_subject'));
             }
             $this->audit->log($userId, 'register', 'user', $userId);
@@ -285,6 +334,10 @@ final class AuthService
 
     public function updateProfile(int $userId, string $name, string $phone, string $locale, array $extra = []): array
     {
+        $oldPhone = $this->db->fetchColumn('SELECT phone FROM users WHERE id = ?', [$userId]);
+        if (SmslenzClient::normalizePhone($oldPhone ?: null) !== SmslenzClient::normalizePhone($phone)) {
+            $this->db->run('UPDATE users SET phone_verified_at = NULL, verified_phone = NULL WHERE id = ?', [$userId]);
+        }
         $whatsapp = $extra['whatsapp'] ?? null;
         $address = $extra['address'] ?? null;
         $city = $extra['city'] ?? null;

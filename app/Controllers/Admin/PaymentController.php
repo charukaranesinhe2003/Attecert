@@ -28,7 +28,7 @@ final class PaymentController extends Controller
         $method = is_string($request->query('method')) ? $request->query('method') : '';
         $method = in_array($method, ['cash', 'bank_transfer', 'card', 'online', 'other', 'refund'], true) ? $method : '';
         $status = is_string($request->query('status')) ? $request->query('status') : '';
-        $status = in_array($status, ['completed', 'refunded'], true) ? $status : '';
+        $status = in_array($status, ['pending', 'completed', 'refunded', 'cancelled'], true) ? $status : '';
         $from = is_string($request->query('from')) ? trim($request->query('from')) : '';
         $to = is_string($request->query('to')) ? trim($request->query('to')) : '';
         $rangeErrors = [];
@@ -40,7 +40,8 @@ final class PaymentController extends Controller
         } catch (\App\Core\ValidationException $exception) {
             $rangeErrors = $exception->errors();
         }
-        $sql = 'SELECT p.*, i.number AS invoice_number, cu.name AS customer_name FROM payments p INNER JOIN invoices i ON i.id = p.invoice_id INNER JOIN customers cu ON cu.id = p.customer_id WHERE 1 = 1';
+        $sql = 'SELECT p.*, i.number AS invoice_number, cu.name AS customer_name FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id INNER JOIN customers cu ON cu.id = p.customer_id WHERE 1 = 1';
+        $sql .= ' AND ' . app(\App\Services\CaseAccessService::class)->scope('p.case_id');
         $params = [];
         foreach (['p.method' => $method, 'p.status' => $status] as $column => $filter) {
             if ($filter !== '') { $sql .= ' AND ' . $column . ' = ?'; $params[] = $filter; }
@@ -65,6 +66,7 @@ final class PaymentController extends Controller
 
     public function store(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('invoices', (int) $id);
         try {
         $data = $this->validate($request, [
             'amount' => 'required|numeric|min:0.01',
@@ -103,6 +105,7 @@ final class PaymentController extends Controller
 
     public function receipt(Request $request, string $id): Response
     {
+        app(\App\Services\CaseAccessService::class)->requireRecord('payments', (int) $id);
         $payment = $this->db->fetch('SELECT * FROM payments WHERE id = ?', [(int) $id]);
         if ($payment === null) {
             throw new \App\Core\HttpException(404, 'Payment not found.');

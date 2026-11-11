@@ -32,27 +32,21 @@ final class AdminOverviewTest extends DatabaseTestCase
         $this->assertSame([], $payload['results']);
         $html = $this->body(app(DashboardController::class)->index($this->get()));
         $this->assertStringNotContainsString($customer['name'], $html);
-        $this->assertStringContainsString('Your workspace', $html);
-        $this->assertStringContainsString('Website', $html);
-        $this->assertStringNotContainsString('href="/admin/invoices', $html);
+        $this->assertStringContainsString('My assigned cases', $html);
+        $this->assertStringNotContainsString('href="/admin/content', $html);
+        $this->assertStringNotContainsString('href="/admin/emails', $html);
         $this->assertDoesNotMatchRegularExpression('/<script(?![^>]*\bsrc=)[^>]*>/i', $html);
     }
 
-    public function testProcessingRoleSeesItsQueuesWithoutFinanceOrQuotationRecords(): void
+    public function testProcessingRoleHasNoGlobalOverviewOrUnassignedSearchRecords(): void
     {
         $this->signInAsRole('processing_staff');
         $metrics = app(ReportService::class)->dashboard();
-        $this->assertNotNull($metrics['active']);
-        $this->assertNull($metrics['unquoted']);
+        $this->assertNull($metrics['active']);
         $this->assertNull($metrics['awaiting_payment']);
-        $this->assertArrayHasKey('mofa', $metrics['attention']);
-        $this->assertArrayHasKey('ready', $metrics['attention']);
-        $this->assertArrayNotHasKey('draft_quotes', $metrics['attention']);
-        $this->assertArrayNotHasKey('overdue', $metrics['attention']);
+        $this->assertSame([], $metrics['attention']);
         $payload = json_decode($this->body(app(SearchController::class)->index($this->get(['q' => '%'], true))), true, 512, JSON_THROW_ON_ERROR);
-        foreach ($payload['results'] as $group) {
-            $this->assertContains($group['label'], ['Cases', 'Customers']);
-        }
+        $this->assertSame([], $payload['results']);
     }
 
     public function testActiveAndUnquotedCardsMatchCaseListFiltersAndQueuesHaveFullCounts(): void
@@ -139,8 +133,9 @@ final class AdminOverviewTest extends DatabaseTestCase
         $this->db->insert('INSERT INTO quotations (number, case_id, customer_id, status) VALUES (?, ?, ?, ?)', ['Q-ROLE-PRIVATE', $this->caseId, $this->customerId, 'draft']);
         $this->db->insert('INSERT INTO invoices (number, case_id, customer_id, status) VALUES (?, ?, ?, ?)', ['I-ROLE-PRIVATE', $this->caseId, $this->customerId, 'issued']);
         foreach (['processing_staff', 'customer_support', 'finance_staff'] as $role) {
-            $this->signInAsRole($role);
-            $html = $this->body(app(CaseController::class)->show($this->get(), (string) $this->caseId));
+            $staff = $this->signInAsRole($role);
+            $this->db->run('UPDATE cases SET assigned_to = ? WHERE id = ?', [$staff, $this->caseId]);
+            $html = $this->body(app(CaseController::class)->details($this->get(), (string) $this->caseId));
             $document = new \DOMDocument();
             $document->loadHTML($html, LIBXML_NOERROR | LIBXML_NOWARNING);
             $xpath = new \DOMXPath($document);
@@ -155,15 +150,9 @@ final class AdminOverviewTest extends DatabaseTestCase
             $this->assertSame($tabs, $panels, $role . ' must have one top-level panel per tab.');
             $this->assertContains('overview', $panels);
             $this->assertContains('activity', $panels);
-            if ($role === 'finance_staff') {
-                $this->assertStringContainsString('Q-ROLE-PRIVATE', $html);
-                $this->assertStringContainsString('I-ROLE-PRIVATE', $html);
-                $this->assertContains('finance', $panels);
-            } else {
-                $this->assertStringNotContainsString('Q-ROLE-PRIVATE', $html);
-                $this->assertStringNotContainsString('I-ROLE-PRIVATE', $html);
-                $this->assertNotContains('finance', $panels);
-            }
+            $this->assertStringContainsString('Q-ROLE-PRIVATE', $html);
+            $this->assertStringContainsString('I-ROLE-PRIVATE', $html);
+            $this->assertContains('finance', $panels);
         }
     }
 

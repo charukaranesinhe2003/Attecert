@@ -130,7 +130,7 @@ final class FinanceWorkflowTest extends DatabaseTestCase
         self::assertSame(0, (int) $this->db->fetchColumn('SELECT COUNT(*) FROM invoices WHERE quotation_id = ?', [$quoteId]));
     }
 
-    public function testPaidInvoiceShowsRefundAndDraftRestoresCustomFields(): void
+    public function testPaidInvoiceShowsRefundAndLegacyQuotationHistoryRemainsReadable(): void
     {
         $quoteId = $this->quotation(false);
         $invoiceId = app(InvoiceService::class)->createFromQuotation($quoteId, $this->adminId);
@@ -139,9 +139,11 @@ final class FinanceWorkflowTest extends DatabaseTestCase
         self::assertStringContainsString('Record refund', $invoiceHtml);
         self::assertStringContainsString('name="method" value="refund"', $invoiceHtml);
 
-        $html = $this->body(app(CaseController::class)->show($this->request('GET'), (string) $this->caseId));
-        self::assertStringContainsString('name="quotation_id" value="' . $quoteId . '"', $html);
-        self::assertStringContainsString('value="Historical custom service"', $html);
+        $html = $this->body(app(CaseController::class)->details($this->request('GET'), (string) $this->caseId));
+        self::assertStringContainsString('name="quotation_document"', $html);
+        self::assertStringNotContainsString('data-quote-builder', $html);
+        $html = $this->body(app(\App\Controllers\Admin\QuotationController::class)->show($this->request('GET'), (string) $quoteId));
+        self::assertStringContainsString('Historical custom service', $html);
         self::assertStringContainsString('Saved quotation note', $html);
         self::assertStringContainsString('Saved quotation terms', $html);
     }

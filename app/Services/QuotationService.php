@@ -19,7 +19,9 @@ final class QuotationService
         private MailService $mail,
         private NotificationService $notifications,
         private WorkflowService $workflow,
-        private InvoiceService $invoices
+        private InvoiceService $invoices,
+        private DocumentService $documents,
+        private CaseAccessService $access
     ) {
     }
 
@@ -198,7 +200,7 @@ final class QuotationService
     public function send(int $quotationId, int $staffId): array
     {
         $bundle = $this->bundle($quotationId);
-        $path = $this->pdf->quotation($bundle['quotation'], $bundle['items'], $bundle['customer'], $bundle['case']);
+        $path = $this->pdfPath($quotationId);
         $result = $this->mail->send(
             $bundle['customer']['email'],
             __('mail.quotation_subject', ['number' => $bundle['quotation']['number']]),
@@ -212,10 +214,13 @@ final class QuotationService
             'quotation',
             $quotationId,
             $path,
-            $bundle['quotation']['number'] . '.pdf'
+            $this->downloadName($quotationId)
         );
         if ($bundle['quotation']['status'] === 'draft') {
             $this->db->run('UPDATE quotations SET status = ?, issued_at = COALESCE(issued_at, NOW()) WHERE id = ? AND status = ?', ['sent', $quotationId, 'draft']);
+            if (!empty($bundle['quotation']['uploaded_document_id'])) {
+                $this->workflow->advance((int) $bundle['quotation']['case_id'], 'quotation_sent', $staffId, 'Uploaded quotation shared with customer', true, false);
+            }
         }
         if ($result['status'] === 'sent') {
             $this->db->run('UPDATE quotations SET sent_at = NOW() WHERE id = ?', [$quotationId]);
@@ -301,8 +306,110 @@ final class QuotationService
     public function pdfPath(int $quotationId): string
     {
         $bundle = $this->bundle($quotationId);
+        if (!empty($bundle['quotation']['uploaded_document_id'])) {
+            $document = $this->uploadedDocument($quotationId);
+            $path = realpath(storage_path('documents/' . $document['stored_name']));
+            $root = realpath(storage_path('documents'));
+            if ($path === false || $root === false || !str_starts_with($path, $root . DIRECTORY_SEPARATOR) || !is_file($path)) {
+                throw new \App\Core\HttpException(404, 'The uploaded quotation file is unavailable.');
+            }
+            return $path;
+        }
 
         return $this->pdf->quotation($bundle['quotation'], $bundle['items'], $bundle['customer'], $bundle['case']);
+    }
+
+    public function downloadName(int $quotationId): string
+    {
+        $bundle = $this->bundle($quotationId);
+        return empty($bundle['quotation']['uploaded_document_id'])
+            ? $bundle['quotation']['number'] . '.pdf' : $this->uploadedDocument($quotationId)['original_name'];
+    }
+
+    private function uploadedDocument(int $quotationId): array
+    {
+        $document = $this->db->fetch('SELECT d.* FROM documents d INNER JOIN quotations q ON q.uploaded_document_id = d.id
+            WHERE q.id = ? AND d.case_id = q.case_id AND d.deleted_at IS NULL', [$quotationId]);
+        if ($document === null) {
+            throw new \App\Core\HttpException(404, 'The uploaded quotation file is unavailable.');
+        }
+        return $document;
+    }
+
+    /** Store the original PDF unchanged; new quotations are never built from service prices. */
+    public function upload(int $caseId, array $file, array $data, int $staffId, ?int $quoteRequestId = null): int
+    {
+        $this->uploadCase($caseId, $quoteRequestId);
+        $total = Decimal::amount($data['total'] ?? '', 'total');
+        if (Money::cmp($total, '0') <= 0) {
+            throw new \App\Core\ValidationException(['total' => 'Enter the total shown on the quotation document.']);
+        }
+        $days = $data['validity_days'] ?? 14;
+        if (!is_scalar($days) || !preg_match('/^\d+$/D', (string) $days) || (int) $days < 1 || (int) $days > 3650) {
+            throw new \App\Core\ValidationException(['validity_days' => 'Use a validity between 1 and 3650 days.']);
+        }
+        $tmp = $file['tmp_name'] ?? null;
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_string($tmp) || !is_file($tmp)
+            || (PHP_SAPI !== 'cli' && !is_uploaded_file($tmp))) {
+            throw new \App\Core\ValidationException(['quotation_document' => 'Choose a quotation PDF to upload.']);
+        }
+        $size = filesize($tmp);
+        $max = (int) setting('upload_max_mb', config('app.upload_max_mb', 10)) * 1024 * 1024;
+        if ($size === false || $size <= 0 || $size > $max) {
+            throw new \App\Core\ValidationException(['quotation_document' => 'The quotation exceeds the upload size limit.']);
+        }
+        if (strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION)) !== 'pdf'
+            || (new \finfo(FILEINFO_MIME_TYPE))->file($tmp) !== 'application/pdf'
+            || file_get_contents($tmp, false, null, 0, 5) !== '%PDF-') {
+            throw new \App\Core\ValidationException(['quotation_document' => 'Upload a PDF quotation document.']);
+        }
+        $file['size'] = $size;
+        $storedPath = null;
+        try {
+            return $this->db->transaction(function () use ($caseId, $file, $data, $staffId, $total, $days, $quoteRequestId, &$storedPath): int {
+                $case = $this->uploadCase($caseId, $quoteRequestId, true);
+                $sourceRequestId = $quoteRequestId ?? $case['quote_request_id'];
+                $previous = $this->db->fetch('SELECT id, version, status FROM quotations WHERE case_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE', [$caseId]);
+                $documentId = $this->documents->store($caseId, null, $file, 'internal', 'quotation', 'Uploaded quotation document', false, $staffId);
+                $storedName = $this->db->fetchColumn('SELECT stored_name FROM documents WHERE id = ?', [$documentId]);
+                $storedPath = storage_path('documents/' . $storedName);
+                $id = $this->db->insert('INSERT INTO quotations
+                    (number, case_id, customer_id, parent_id, version, status, currency, subtotal, total, valid_until, notes, created_by, uploaded_document_id, quote_request_id)
+                    VALUES (?, ?, ?, ?, ?, \'draft\', ?, ?, ?, ?, ?, ?, ?, ?)', [
+                    $this->numbers->next('quotation', 'QT'), $caseId, $case['customer_id'], $previous['id'] ?? null,
+                    $previous === null ? 1 : (int) $previous['version'] + 1, $case['currency'], $total, $total,
+                    date('Y-m-d', strtotime('+' . (int) $days . ' days')), $data['notes'] ?? null, $staffId, $documentId, $sourceRequestId,
+                ]);
+                $this->db->insert("INSERT INTO quotation_items (quotation_id, description, quantity, unit_price, line_total, pricing_type)
+                    VALUES (?, 'Uploaded quotation document', 1, ?, ?, 'custom')", [$id, $total, $total]);
+                if ($previous !== null && in_array($previous['status'], ['draft', 'sent', 'viewed'], true)) {
+                    $this->db->run("UPDATE quotations SET status = 'superseded' WHERE id = ?", [$previous['id']]);
+                }
+                $this->snapshot($id, $staffId);
+                $this->audit->log($staffId, 'quotation_uploaded', 'quotation', $id, ['document_id' => $documentId, 'total' => $total]);
+                return $id;
+            });
+        } catch (\Throwable $exception) {
+            if ($storedPath !== null && is_file($storedPath)) {
+                unlink($storedPath);
+            }
+            throw $exception;
+        }
+    }
+
+    private function uploadCase(int $caseId, ?int $quoteRequestId, bool $lock = false): array
+    {
+        if ($quoteRequestId === null) {
+            $this->access->requireCase($caseId, $lock);
+        } else {
+            $request = $this->access->requireQuote($quoteRequestId, $lock);
+            if ((int) $request['converted_case_id'] !== $caseId) {
+                throw new \App\Core\HttpException(404, 'This case does not belong to the quote request.');
+            }
+        }
+        $case = $this->db->fetch('SELECT * FROM cases WHERE id = ? AND deleted_at IS NULL' . ($lock ? ' FOR UPDATE' : ''), [$caseId]);
+        if ($case === null) { throw new \App\Core\HttpException(404, 'Case not found.'); }
+        return $case;
     }
 
     private function snapshot(int $quotationId, int $staffId): void
