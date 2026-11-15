@@ -129,6 +129,15 @@ final class PageController extends Controller
         ]);
     }
 
+    public function bankDetails(): Response
+    {
+        return $this->view('public/bank-details', [
+            'title' => 'Bank Details & Payment Information',
+            'description' => 'Official bank accounts for AtteCert document attestation, translation, and legalization payments in Sri Lanka.',
+            'active' => 'bank_details',
+        ]);
+    }
+
     public function sendContact(Request $request): Response
     {
         $data = $this->validate($request, [

@@ -64,6 +64,9 @@ return function (Router $router): void {
     $router->get('/guides/{slug}', [PageController::class, 'guide']);
     $router->get('/contact', [PageController::class, 'contact']);
     $router->post('/contact', [PageController::class, 'sendContact']);
+    $router->get('/bank-details', [PageController::class, 'bankDetails']);
+    $router->get('/bank-accounts', [PageController::class, 'bankDetails']);
+    $router->get('/payment-details', [PageController::class, 'bankDetails']);
     $router->get('/sitemap.xml', [PageController::class, 'sitemap']);
     $router->get('/robots.txt', [PageController::class, 'robots']);
 

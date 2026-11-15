@@ -32,6 +32,7 @@
         </div>
         <div>
             <h2><?= e(__('footer.resources')) ?></h2>
+            <a href="<?= e(url('/bank-details')) ?>">Bank Details</a>
             <a href="<?= e(url('/countries')) ?>"><?= e(__('nav.countries')) ?></a>
             <a href="<?= e(url('/track')) ?>"><?= e(__('nav.tracking')) ?></a>
             <a href="<?= e(url('/quote')) ?>"><?= e(__('nav.quote')) ?></a>
