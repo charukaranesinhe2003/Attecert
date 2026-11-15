@@ -11,10 +11,14 @@ $name = (string) env('DB_DATABASE', 'attecert');
 $user = (string) env('DB_USERNAME', 'root');
 $password = (string) env('DB_PASSWORD', '');
 
-$server = new PDO("mysql:host={$host};port={$port};charset=utf8mb4", $user, $password, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-]);
-$server->exec('CREATE DATABASE IF NOT EXISTS `' . str_replace('`', '', $name) . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+try {
+    $server = new PDO("mysql:host={$host};port={$port};charset=utf8mb4", $user, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    ]);
+    $server->exec('CREATE DATABASE IF NOT EXISTS `' . str_replace('`', '', $name) . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+} catch (Throwable) {
+    // Database already exists or user has restricted permissions on shared hosting (e.g. cPanel)
+}
 $pdo = new PDO("mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4", $user, $password, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
 ]);

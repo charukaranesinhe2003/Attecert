@@ -16,13 +16,15 @@ header('Content-Type: text/html; charset=utf-8');
         .warn { color: #d97706; font-weight: bold; }
         .error { color: #dc2626; font-weight: bold; }
         code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
-        pre { background: #0f172a; color: #f8fafc; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
-        .btn { display: inline-block; background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 500; }
+        pre { background: #0f172a; color: #f8fafc; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; max-height: 400px; }
+        .btn { display: inline-block; background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-right: 8px; }
+        .btn-success { background: #16a34a; }
+        .btn-danger { background: #dc2626; }
     </style>
 </head>
 <body>
 <h1>AtteCert Deployment Diagnostics & Self-Repair</h1>
-<p>This script checks your cPanel file structure, permissions, configuration, and database connection.</p>
+<p>This script checks your cPanel file structure, permissions, database configuration, migrations, and error logs.</p>
 
 <div class="card">
     <h2>1. Root Directory & Core Folders</h2>
@@ -92,14 +94,14 @@ header('Content-Type: text/html; charset=utf-8');
 </div>
 
 <div class="card">
-    <h2>3. Environment (.env) & Database Test</h2>
+    <h2>3. Environment (.env), Database & Migrations</h2>
     <?php
     $envPath = $basePath . '/.env';
+    $pdo = null;
     if (!is_file($envPath)) {
         echo "<p class=\"warn\">Warning: <code>.env</code> file not found at <code>{$envPath}</code>.<br>The app will attempt to use default settings.</p>";
     } else {
         echo "<p class=\"ok\">&check; <code>.env</code> file found at <code>{$envPath}</code>.</p>";
-        // Simple parse
         $envData = [];
         foreach (file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
             $line = trim($line);
@@ -113,7 +115,9 @@ header('Content-Type: text/html; charset=utf-8');
         $db   = $envData['DB_DATABASE'] ?? 'attecert';
         $user = $envData['DB_USERNAME'] ?? 'root';
         $pass = $envData['DB_PASSWORD'] ?? '';
+        $appDebug = strtolower((string) ($envData['APP_DEBUG'] ?? 'false'));
 
+        echo "<p>APP_DEBUG: <code>" . htmlspecialchars($appDebug) . "</code> " . ($appDebug === 'true' ? '<span class="warn">(Debug mode active)</span>' : '<span>(Production mode: errors hide detailed traces)</span>') . "</p>";
         echo "<p>Parsed DB config: Host=<code>{$host}:{$port}</code>, Database=<code>{$db}</code>, User=<code>{$user}</code></p>";
 
         echo "<p>Testing MySQL PDO connection...</p>";
@@ -129,7 +133,71 @@ header('Content-Type: text/html; charset=utf-8');
             $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
             echo "<p>Tables found in database: <strong>" . count($tables) . "</strong> (" . htmlspecialchars(implode(', ', array_slice($tables, 0, 8))) . (count($tables) > 8 ? '...' : '') . ")</p>";
             if (empty($tables)) {
-                echo "<p class=\"warn\">Warning: Database is connected but has no tables. Remember to import <code>database/schema.sql</code>.</p>";
+                echo "<p class=\"warn\">Warning: Database is connected but has no tables. Remember to import <code>database/schema.sql</code> or <code>database/attecert.sql</code>.</p>";
+            } else {
+                // Check schema migrations
+                $migrationsDir = $basePath . '/database/migrations';
+                $pdo->exec('CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(80) PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+                $applied = $pdo->query('SELECT version FROM schema_migrations')->fetchAll(PDO::FETCH_COLUMN) ?: [];
+                $migrationFiles = glob($migrationsDir . '/*.sql') ?: [];
+                
+                $pending = [];
+                foreach ($migrationFiles as $mf) {
+                    $v = basename($mf);
+                    if (!in_array($v, $applied, true)) {
+                        $pending[] = $mf;
+                    }
+                }
+
+                echo "<h3>Database Migrations Status</h3>";
+                echo "<p>Applied migrations: <strong>" . count($applied) . "</strong> / " . count($migrationFiles) . "</p>";
+
+                // Check critical custom_status column in cases table
+                try {
+                    $hasCustomStatus = $pdo->query("SHOW COLUMNS FROM cases LIKE 'custom_status'")->fetch();
+                    if ($hasCustomStatus) {
+                        echo "<p class=\"ok\">&check; <code>cases.custom_status</code> column is PRESENT.</p>";
+                    } else {
+                        echo "<p class=\"error\">&cross; <strong>CRITICAL ISSUE DETECTED:</strong> Column <code>cases.custom_status</code> is MISSING from the <code>cases</code> table! This causes the <code>500 Something went wrong</code> error when visiting <code>/admin</code>.</p>";
+                    }
+                } catch (Throwable) {}
+
+                if (!empty($pending)) {
+                    echo "<p class=\"warn\">Pending migrations (" . count($pending) . "):</p><ul>";
+                    foreach ($pending as $pm) {
+                        echo "<li><code>" . htmlspecialchars(basename($pm)) . "</code></li>";
+                    }
+                    echo "</ul>";
+
+                    if (($_GET['run_migrations'] ?? '') === '1') {
+                        echo "<h4>Applying Pending Migrations...</h4>";
+                        $pdo->exec("SET FOREIGN_KEY_CHECKS = 0;");
+                        foreach ($pending as $mf) {
+                            $version = basename($mf);
+                            $sql = file_get_contents($mf);
+                            $parts = preg_split('/;\s*(?:\r?\n|$)/', $sql) ?: [];
+                            foreach ($parts as $st) {
+                                $st = trim($st);
+                                if ($st !== '' && preg_match('/^(CREATE|ALTER|INSERT|UPDATE|DELETE)\b/i', ltrim($st))) {
+                                    try {
+                                        $pdo->exec($st);
+                                    } catch (Throwable $ex) {
+                                        echo "<p class=\"warn\">Notice on {$version}: " . htmlspecialchars($ex->getMessage()) . "</p>";
+                                    }
+                                }
+                            }
+                            $ins = $pdo->prepare('INSERT IGNORE INTO schema_migrations (version) VALUES (?)');
+                            $ins->execute([$version]);
+                            echo "<p class=\"ok\">&check; Applied <code>{$version}</code></p>";
+                        }
+                        $pdo->exec("SET FOREIGN_KEY_CHECKS = 1;");
+                        echo "<p class=\"ok\"><strong>&check; All migrations successfully applied! Try accessing <a href=\"/admin\">/admin</a> now.</strong></p>";
+                    } else {
+                        echo "<a class=\"btn btn-success\" href=\"?run_migrations=1\">Click Here to Run Pending Migrations (1-Click Fix)</a>";
+                    }
+                } else {
+                    echo "<p class=\"ok\">&check; All migrations are up to date!</p>";
+                }
             }
         } catch (Throwable $e) {
             echo "<p class=\"error\">&cross; <strong>Database Connection Failed:</strong> " . htmlspecialchars($e->getMessage()) . "</p>";
@@ -139,7 +207,21 @@ header('Content-Type: text/html; charset=utf-8');
 </div>
 
 <div class="card">
-    <h2>4. Automatic Full Permission Fix</h2>
+    <h2>4. Recent Error Logs (storage/logs/app.log)</h2>
+    <?php
+    $logFile = $basePath . '/storage/logs/app.log';
+    if (is_file($logFile) && filesize($logFile) > 0) {
+        $lines = file($logFile);
+        $lastLines = array_slice($lines, -40);
+        echo "<pre>" . htmlspecialchars(implode('', $lastLines)) . "</pre>";
+    } else {
+        echo "<p>No entries found in <code>storage/logs/app.log</code>.</p>";
+    }
+    ?>
+</div>
+
+<div class="card">
+    <h2>5. Automatic Full Permission Fix</h2>
     <?php
     $action = $_GET['fix_perms'] ?? '';
     if ($action === '1') {
