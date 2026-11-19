@@ -36,6 +36,11 @@ final class Request
         } elseif ($path === '/public') {
             $path = '/';
         }
+        if ($path === '/index.php' || $path === '/index') {
+            $path = '/';
+        } elseif (str_ends_with($path, '.php')) {
+            $path = substr($path, 0, -4);
+        }
         if ($path === '' || !str_starts_with($path, '/')) {
             $path = '/' . ltrim($path, '/');
         }

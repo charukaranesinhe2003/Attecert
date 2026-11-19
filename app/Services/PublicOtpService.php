@@ -81,6 +81,16 @@ final class PublicOtpService
             }
             return $id;
         });
+        try {
+            if ($channel === 'email' && $this->mail->smtpReady()) {
+                $this->mail->processQueue(5);
+            } elseif ($channel === 'sms' && $this->sms->ready()) {
+                $this->sms->processQueue(5);
+            }
+        } catch (\Throwable) {
+            // Keep in queue for background retry
+        }
+        return $id;
     }
 
     private function rate(string $key, int $limit): void

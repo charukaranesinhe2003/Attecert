@@ -48,6 +48,15 @@ final class CustomerOtpService
             return ['id' => $id, 'channel' => $channel, 'status' => $delivery['status']];
         });
         $_SESSION['_customer_otp'] = $result['id'];
+        try {
+            if ($channel === 'email' && $this->mail->smtpReady()) {
+                $this->mail->processQueue(5);
+            } elseif ($channel === 'sms' && $this->sms->ready()) {
+                $this->sms->processQueue(5);
+            }
+        } catch (\Throwable) {
+            // Keep in queue for background retry
+        }
         return $result;
     }
 
