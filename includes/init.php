@@ -95,6 +95,12 @@ if (!function_exists('require_auth')) {
             exit;
         }
 
+        if (auth()->isCustomer() && auth()->needsVerification()) {
+            $verifyUrl = base_url_path() . '/verify-customer';
+            header('Location: ' . $verifyUrl);
+            exit;
+        }
+
         return $user;
     }
 }

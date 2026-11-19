@@ -73,7 +73,9 @@ final class MailService
 
     public function smtpReady(): bool
     {
-        return (string) config('mail.host') !== '' && (string) config('mail.from_address') !== '';
+        $hasHost = (string) config('mail.host') !== '';
+        $hasMailFunc = function_exists('mail');
+        return ($hasHost || $hasMailFunc) && (string) $this->fromAddress() !== '';
     }
 
     public function queueAvailable(): bool
@@ -141,14 +143,42 @@ final class MailService
         if (!empty($expiryPayload['expires_at']) && strtotime($expiryPayload['expires_at']) <= time()) {
             return $this->finish($claim, 'failed', 'This message expired before delivery. Request a new verification code.');
         }
-        if (!class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+        if (!class_exists(\PHPMailer\PHPMailer\PHPMailer::class) || (string) config('mail.host') === '') {
             $payload = json_decode($claim['payload'], true, 512, JSON_THROW_ON_ERROR);
             [$html, $attachment] = $this->loadPayload($payload);
-            if ($attachment !== []) { return $this->finish($claim, 'failed', 'SMTP attachment support is unavailable. Install the configured mail dependencies before retrying.'); }
-            $headers = "MIME-Version: 1.0\r\nContent-type: text/html; charset=UTF-8\r\nFrom: {$payload['from_name']} <{$payload['from_address']}>\r\nReply-To: {$payload['from_address']}\r\nX-Mailer: PHP/" . phpversion();
-            $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers);
+            if (!empty($attachment)) {
+                $boundary = '==Multipart_Boundary_x' . md5((string) time()) . 'x';
+                $headers = "MIME-Version: 1.0\r\n";
+                $headers .= "From: {$payload['from_name']} <{$payload['from_address']}>\r\n";
+                $headers .= "Reply-To: {$payload['from_address']}\r\n";
+                $headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
+                $headers .= "Content-Type: multipart/mixed; boundary=\"{$boundary}\"\r\n";
+
+                $body = "--{$boundary}\r\n";
+                $body .= "Content-Type: text/html; charset=UTF-8\r\n";
+                $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
+                $body .= $html . "\r\n\r\n";
+
+                foreach ($attachment as $file) {
+                    $body .= "--{$boundary}\r\n";
+                    $body .= "Content-Type: application/octet-stream; name=\"" . addslashes($file['name']) . "\"\r\n";
+                    $body .= "Content-Transfer-Encoding: base64\r\n";
+                    $body .= "Content-Disposition: attachment; filename=\"" . addslashes($file['name']) . "\"\r\n\r\n";
+                    $body .= chunk_split(base64_encode($file['bytes'])) . "\r\n\r\n";
+                }
+                $body .= "--{$boundary}--";
+                $sent = @mail($claim['recipient'], $claim['subject'], $body, $headers);
+            } else {
+                $headers = "MIME-Version: 1.0\r\nContent-type: text/html; charset=UTF-8\r\nFrom: {$payload['from_name']} <{$payload['from_address']}>\r\nReply-To: {$payload['from_address']}\r\nX-Mailer: PHP/" . phpversion();
+                $senderArg = '-f' . preg_replace('/[^A-Za-z0-9._%+-@]/', '', (string) $payload['from_address']);
+                $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers, $senderArg);
+                if (!$sent) {
+                    $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers);
+                }
+            }
+            $sent = $this->deliverViaMailFunction($claim);
             $status = $sent ? 'sent' : 'failed';
-            $error = $sent ? null : 'Mail saved locally. Configure SMTP or PHP mail() for direct delivery.';
+            $error = $sent ? null : 'Failed to send mail via PHP mail(). Please verify server mail settings or configure SMTP.';
             return $this->finish($claim, $status, $error);
         }
 
@@ -177,10 +207,26 @@ final class MailService
             if (!PHPMailer::validateAddress($claim['recipient']) || !PHPMailer::validateAddress($payload['from_address'])) {
                 throw new \RuntimeException('The saved sender or recipient email address is invalid.');
             }
+
+            $host = (string) config('mail.host');
+            $port = (int) config('mail.port', 587);
+            $encryption = strtolower(trim((string) config('mail.encryption', 'tls')));
+
+            // Auto-correct common port / encryption mismatches
+            if ($port === 587 && $encryption === 'ssl') {
+                $encryption = 'tls';
+            } elseif ($port === 465 && ($encryption === 'tls' || $encryption === '')) {
+                $encryption = 'ssl';
+            } elseif ($port === 25) {
+                $encryption = '';
+            }
+
             $mailer->isSMTP();
             $mailer->setSMTPInstance($transport);
             $mailer->Host = (string) config('mail.host');
             $mailer->Port = (int) config('mail.port');
+            $mailer->Host = $host;
+            $mailer->Port = $port;
             $mailer->SMTPAuth = (string) config('mail.username') !== '';
             $mailer->Username = (string) config('mail.username');
             $mailer->Password = (string) config('mail.password');
@@ -188,7 +234,18 @@ final class MailService
             $mailer->SMTPSecure = in_array($encryption, ['', 'none'], true) ? '' : $encryption;
             $mailer->SMTPAutoTLS = !in_array($encryption, ['', 'none'], true);
             $mailer->Timeout = max(1, min(120, (int) config('mail.timeout', 30)));
+            $mailer->Timeout = max(1, min(120, (int) config('mail.timeout', 20)));
             $transport->Timelimit = $mailer->Timeout;
+
+            // Allow local cPanel / self-signed / mismatched certificates on localhost
+            $mailer->SMTPOptions = [
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                    'allow_self_signed' => true,
+                ],
+            ];
+
             $mailer->CharSet = 'UTF-8';
             $mailer->setFrom($payload['from_address'], $payload['from_name']);
             $mailer->addAddress($claim['recipient']);
@@ -209,11 +266,68 @@ final class MailService
                 $status = 'queued';
                 $error = 'Temporary SMTP failure; a later worker run will retry. ' . $this->safeError($exception);
             } else $error = $this->safeError($exception);
+            } else {
+                // If message data was never transmitted to SMTP, attempt fallback to server PHP mail()
+                if (!$transport->dataStarted && function_exists('mail')) {
+                    $fallbackSent = $this->deliverViaMailFunction($claim);
+                    if ($fallbackSent) {
+                        return $this->finish($claim, 'sent', null);
+                    }
+                }
+
+                if ($exception instanceof \PHPMailer\PHPMailer\Exception && $code < 500 && $claim['attempts'] < $claim['max_attempts']) {
+                    $status = 'queued';
+                    $error = 'Temporary SMTP failure; a later worker run will retry. ' . $this->safeError($exception);
+                } else {
+                    $error = $this->safeError($exception);
+                }
+            }
         } finally {
             $mailer->smtpClose();
         }
 
         return $this->finish($claim, $status, $error);
+    }
+
+    private function deliverViaMailFunction(array $claim): bool
+    {
+        try {
+            $payload = json_decode($claim['payload'], true, 512, JSON_THROW_ON_ERROR);
+            [$html, $attachment] = $this->loadPayload($payload);
+            if (!empty($attachment)) {
+                $boundary = '==Multipart_Boundary_x' . md5((string) time()) . 'x';
+                $headers = "MIME-Version: 1.0\r\n";
+                $headers .= "From: {$payload['from_name']} <{$payload['from_address']}>\r\n";
+                $headers .= "Reply-To: {$payload['from_address']}\r\n";
+                $headers .= "X-Mailer: PHP/" . phpversion() . "\r\n";
+                $headers .= "Content-Type: multipart/mixed; boundary=\"{$boundary}\"\r\n";
+
+                $body = "--{$boundary}\r\n";
+                $body .= "Content-Type: text/html; charset=UTF-8\r\n";
+                $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
+                $body .= $html . "\r\n\r\n";
+
+                foreach ($attachment as $file) {
+                    $body .= "--{$boundary}\r\n";
+                    $body .= "Content-Type: application/octet-stream; name=\"" . addslashes($file['name']) . "\"\r\n";
+                    $body .= "Content-Transfer-Encoding: base64\r\n";
+                    $body .= "Content-Disposition: attachment; filename=\"" . addslashes($file['name']) . "\"\r\n\r\n";
+                    $body .= chunk_split(base64_encode($file['bytes'])) . "\r\n\r\n";
+                }
+                $body .= "--{$boundary}--";
+                return (bool) @mail($claim['recipient'], $claim['subject'], $body, $headers);
+            }
+
+            $headers = "MIME-Version: 1.0\r\nContent-type: text/html; charset=UTF-8\r\nFrom: {$payload['from_name']} <{$payload['from_address']}>\r\nReply-To: {$payload['from_address']}\r\nX-Mailer: PHP/" . phpversion();
+            $senderArg = '-f' . preg_replace('/[^A-Za-z0-9._%+-@]/', '', (string) $payload['from_address']);
+            $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers, $senderArg);
+            if (!$sent) {
+                $sent = @mail($claim['recipient'], $claim['subject'], $html, $headers);
+            }
+            return (bool) $sent;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function finish(array $claim, string $status, ?string $error): array

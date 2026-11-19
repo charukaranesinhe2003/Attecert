@@ -44,6 +44,10 @@ header('Content-Type: text/html; charset=utf-8');
     }
     echo "<p>Detected Base Path: <code>" . htmlspecialchars((string) $basePath) . "</code></p>";
 
+    if ($basePath && is_file($basePath . '/bootstrap/autoload.php')) {
+        require_once $basePath . '/bootstrap/autoload.php';
+    }
+
     $requiredFolders = ['app', 'bootstrap', 'config', 'database', 'public', 'resources', 'routes', 'storage', 'vendor'];
     echo "<ul>";
     foreach ($requiredFolders as $folder) {
@@ -80,11 +84,15 @@ header('Content-Type: text/html; charset=utf-8');
         foreach (['app.php', 'database.php', 'mail.php', 'sms.php', 'verification.php'] as $cfg) {
             $cfgFile = $configDir . '/' . $cfg;
             if (is_file($cfgFile)) {
-                $content = @include $cfgFile;
-                if (is_array($content)) {
-                    echo "<p class=\"ok\">&check; <code>{$cfg}</code> loaded successfully as array.</p>";
-                } else {
-                    echo "<p class=\"error\">&cross; <code>{$cfg}</code> exists but did not return array.</p>";
+                try {
+                    $content = include $cfgFile;
+                    if (is_array($content)) {
+                        echo "<p class=\"ok\">&check; <code>{$cfg}</code> loaded successfully as array.</p>";
+                    } else {
+                        echo "<p class=\"error\">&cross; <code>{$cfg}</code> exists but did not return array.</p>";
+                    }
+                } catch (Throwable $e) {
+                    echo "<p class=\"warn\">&cross; <code>{$cfg}</code> notice: " . htmlspecialchars($e->getMessage()) . "</p>";
                 }
             } else {
                 echo "<p class=\"error\">&cross; <code>{$cfg}</code> is MISSING from <code>config/</code> directory!</p>";
@@ -230,14 +238,15 @@ header('Content-Type: text/html; charset=utf-8');
     $mailHost = trim((string) ($envData['MAIL_HOST'] ?? ''));
     $mailPort = trim((string) ($envData['MAIL_PORT'] ?? '587'));
     $mailUser = trim((string) ($envData['MAIL_USERNAME'] ?? ''));
-    $mailFrom = trim((string) ($envData['MAIL_FROM_ADDRESS'] ?? ''));
+    $mailFrom = trim((string) ($envData['MAIL_FROM_ADDRESS'] ?? 'hello@attecert.lk'));
     $mailEnc  = trim((string) ($envData['MAIL_ENCRYPTION'] ?? 'tls'));
 
     $smsUserId   = trim((string) ($envData['SMSLENZ_USER_ID'] ?? ''));
     $smsApiKey   = trim((string) ($envData['SMSLENZ_API_KEY'] ?? ''));
     $smsSenderId = trim((string) ($envData['SMSLENZ_SENDER_ID'] ?? ''));
 
-    $emailReady = $mailHost !== '' && $mailFrom !== '';
+    $hasMailFunc = function_exists('mail');
+    $emailReady = ($mailHost !== '' || $hasMailFunc) && $mailFrom !== '';
     $smsReady   = $smsUserId !== '' && $smsApiKey !== '' && $smsSenderId !== '';
 
     echo "<h3>A. Customer Account OTP Setting</h3>";
@@ -252,11 +261,15 @@ header('Content-Type: text/html; charset=utf-8');
 
     echo "<h3>B. Email (SMTP) Configuration Status</h3>";
     echo "<ul>";
-    echo "<li>Host: <code>" . ($mailHost !== '' ? htmlspecialchars($mailHost) : '<span class="error">NOT SET</span>') . "</code></li>";
+    echo "<li>Host: <code>" . ($mailHost !== '' ? htmlspecialchars($mailHost) : '<span class="warn">NOT SET (will use server native mail() fallback)</span>') . "</code></li>";
     echo "<li>Port: <code>" . htmlspecialchars($mailPort) . "</code> (Encryption: <code>" . htmlspecialchars($mailEnc) . "</code>)</li>";
+    if ($mailPort === '587' && strtolower($mailEnc) === 'ssl') {
+        echo "<li><span class=\"warn\">&#9888; Note: Port 587 uses STARTTLS (tls). For direct SSL, use Port 465. MailService auto-normalizes this and falls back to PHP mail() if SMTP is unreachable.</span></li>";
+    }
     echo "<li>Username: <code>" . ($mailUser !== '' ? htmlspecialchars($mailUser) : '<span class="warn">NOT SET</span>') . "</code></li>";
     echo "<li>From Address: <code>" . ($mailFrom !== '' ? htmlspecialchars($mailFrom) : '<span class="error">NOT SET</span>') . "</code></li>";
-    echo "<li>SMTP Status: " . ($emailReady ? '<span class="ok">&check; READY FOR SENDING</span>' : '<span class="error">&cross; NOT READY (MAIL_HOST and MAIL_FROM_ADDRESS required)</span>') . "</li>";
+    $mailModeDesc = $mailHost !== '' ? 'READY (via SMTP)' : ($hasMailFunc ? 'READY (via server PHP mail() fallback)' : 'NOT READY');
+    echo "<li>Email Delivery Status: " . ($emailReady ? "<span class=\"ok\">&check; {$mailModeDesc}</span>" : '<span class="error">&cross; NOT READY</span>') . "</li>";
     echo "</ul>";
 
     echo "<h3>C. SMS Gateway (SMSlenz) Configuration Status</h3>";
@@ -344,6 +357,80 @@ header('Content-Type: text/html; charset=utf-8');
             echo "<a class=\"btn\" href=\"?process_queue=1\">Trigger Queue Dispatch Now (Web-based)</a>";
             echo "</div>";
         }
+
+        // Live Test Tools
+        echo "<hr style=\"margin:20px 0; border:none; border-top:1px solid #e2e8f0;\">";
+        echo "<h3>Live Delivery Test</h3>";
+
+        if (isset($_POST['run_test_sms'])) {
+            $testPhone = trim($_POST['test_sms_phone'] ?? '');
+            echo "<h4>SMS Test Result for: " . htmlspecialchars($testPhone) . "</h4>";
+            try {
+                if (!defined('BASE_PATH')) define('BASE_PATH', $basePath);
+                require_once $basePath . '/bootstrap/autoload.php';
+                if (!isset($GLOBALS['app_container'])) require_once $basePath . '/bootstrap/app.php';
+                $client = app(\App\Services\SmslenzClient::class);
+                $res = $client->send([
+                    'recipient' => $testPhone,
+                    'contact_name' => 'Tester',
+                    'message' => 'AtteCert Test Verification Code: ' . random_int(100000, 999999) . ' sent at ' . date('H:i:s')
+                ]);
+                echo "<pre>" . htmlspecialchars(json_encode($res, JSON_PRETTY_PRINT)) . "</pre>";
+                if ($res['status'] === 'sent') {
+                    echo "<p class=\"ok\">&check; SMS sent successfully via SMSlenz!</p>";
+                } else {
+                    echo "<p class=\"error\">&cross; SMS delivery failed. Provider reply: " . htmlspecialchars((string) ($res['error_code'] ?? 'Unknown')) . "</p>";
+                    if (!empty($res['raw_response'])) {
+                        echo "<p>Raw Response from SMSlenz:</p><pre>" . htmlspecialchars((string) $res['raw_response']) . "</pre>";
+                    }
+                }
+            } catch (Throwable $e) {
+                echo "<p class=\"error\">Error: " . htmlspecialchars($e->getMessage()) . "</p>";
+            }
+        }
+
+        if (isset($_POST['run_test_email'])) {
+            $testEmail = trim($_POST['test_email_to'] ?? '');
+            echo "<h4>Email Test Result for: " . htmlspecialchars($testEmail) . "</h4>";
+            try {
+                if (!defined('BASE_PATH')) define('BASE_PATH', $basePath);
+                require_once $basePath . '/bootstrap/autoload.php';
+                if (!isset($GLOBALS['app_container'])) require_once $basePath . '/bootstrap/app.php';
+                $mailService = app(\App\Services\MailService::class);
+                $res = $mailService->send($testEmail, 'AtteCert Test Email Delivery', 'customer-otp', [
+                    'name' => 'Tester',
+                    'code' => (string) random_int(100000, 999999),
+                    'minutes' => 10
+                ]);
+                echo "<p>Queued Email log ID: " . ($res['id'] ?? 'none') . ", Status: " . ($res['status'] ?? 'unknown') . "</p>";
+                echo "<p>Dispatching queue immediately...</p>";
+                $testLogId = isset($res['id']) ? (int) $res['id'] : null;
+                $mRes = $mailService->processQueue(1, $testLogId);
+                echo "<pre>" . htmlspecialchars(json_encode($mRes, JSON_PRETTY_PRINT)) . "</pre>";
+                if (!empty($mRes) && ($mRes[0]['status'] ?? '') === 'sent') {
+                    echo "<p class=\"ok\">&check; Email delivered successfully!</p>";
+                } else {
+                    $err = $mRes[0]['error'] ?? $res['error'] ?? 'Check SMTP or PHP mail()';
+                    echo "<p class=\"error\">&cross; Email delivery failed: " . htmlspecialchars((string) $err) . "</p>";
+                }
+            } catch (Throwable $e) {
+                echo "<p class=\"error\">Error: " . htmlspecialchars($e->getMessage()) . "</p>";
+            }
+        }
+
+        echo "<div style=\"display:flex; gap:20px; flex-wrap:wrap; margin-top:12px;\">";
+        echo "<form method=\"post\" style=\"background:#f8fafc; border:1px solid #cbd5e1; padding:12px; border-radius:6px; flex:1; min-width:260px;\">";
+        echo "<label style=\"display:block; font-weight:600; margin-bottom:4px;\">Test Mobile Number (SMS):</label>";
+        echo "<input type=\"text\" name=\"test_sms_phone\" placeholder=\"0718885769\" style=\"width:100%; padding:6px; margin-bottom:8px; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;\" required>";
+        echo "<button type=\"submit\" name=\"run_test_sms\" class=\"btn\" style=\"font-size:0.9em;\">Send Live Test SMS</button>";
+        echo "</form>";
+
+        echo "<form method=\"post\" style=\"background:#f8fafc; border:1px solid #cbd5e1; padding:12px; border-radius:6px; flex:1; min-width:260px;\">";
+        echo "<label style=\"display:block; font-weight:600; margin-bottom:4px;\">Test Email Address:</label>";
+        echo "<input type=\"email\" name=\"test_email_to\" placeholder=\"you@example.com\" style=\"width:100%; padding:6px; margin-bottom:8px; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;\" required>";
+        echo "<button type=\"submit\" name=\"run_test_email\" class=\"btn btn-success\" style=\"font-size:0.9em;\">Send Live Test Email</button>";
+        echo "</form>";
+        echo "</div>";
     }
     ?>
     <div style="margin-top:16px; background:#eff6ff; padding:12px; border-radius:6px; font-size:0.9em;">

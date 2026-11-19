@@ -20,8 +20,11 @@ final class DashboardController extends Controller
         parent::__construct($validator);
     }
 
-    public function index(Request $request): Response
+    public function index(?Request $request = null): Response
     {
+        if ($this->auth->needsVerification()) {
+            return $this->redirect('/verify-customer');
+        }
         $customer = $this->auth->customer();
         $user = $this->auth->user();
         $id = (int) $customer['id'];

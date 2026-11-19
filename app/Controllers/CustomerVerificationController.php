@@ -17,10 +17,25 @@ final class CustomerVerificationController extends Controller
     public function show(): Response
     {
         if (!$this->auth->needsVerification()) { return $this->redirect($this->auth->homePath()); }
+        $user = $this->auth->user();
+        $emailReady = $this->mail->smtpReady();
+        $smsReady = $this->sms->ready();
+
+        if (empty($_SESSION['_customer_otp']) && ($emailReady || $smsReady)) {
+            $channel = $emailReady ? 'email' : 'sms';
+            try {
+                $this->otp->send($channel);
+                $dest = $channel === 'email' ? CustomerOtpService::mask($user['email']) : CustomerOtpService::mask((string) ($user['phone'] ?? ''));
+                flash('success', 'A 6-digit verification code was sent to your ' . $channel . ' (' . $dest . '). Enter the code below to open your account.');
+            } catch (\Throwable) {
+                // If auto-send encounters rate limiting or temporary issue, user can still trigger manually
+            }
+        }
+
         return $this->view('auth/customer-otp', ['title' => 'Verify your account', 'robots' => 'noindex', 'verificationPage' => true,
-            'email' => CustomerOtpService::mask($this->auth->user()['email']),
-            'phone' => CustomerOtpService::mask((string) $this->auth->user()['phone']),
-            'emailReady' => $this->mail->smtpReady(), 'smsReady' => $this->sms->ready()]);
+            'email' => CustomerOtpService::mask($user['email']),
+            'phone' => CustomerOtpService::mask((string) ($user['phone'] ?? '')),
+            'emailReady' => $emailReady, 'smsReady' => $smsReady]);
     }
     public function send(Request $request): Response
     {

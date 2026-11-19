@@ -10,6 +10,7 @@ final class CustomerOtpService
 
     public function send(string $channel): array
     {
+        $this->ensureTables();
         $user = $this->auth->user();
         if ($user === null || $this->auth->isStaff() || !$this->auth->needsVerification()) {
             throw new ValidationException(['channel' => 'Customer verification is not required for this account.']);
@@ -62,6 +63,7 @@ final class CustomerOtpService
 
     public function verify(string $code): bool
     {
+        $this->ensureTables();
         $user = $this->auth->user();
         if ($user === null || $this->auth->isStaff() || !preg_match('/^[0-9]{6}$/D', $code)) { return false; }
         $verified = $this->db->transaction(function () use ($user, $code): bool {
@@ -92,5 +94,36 @@ final class CustomerOtpService
     {
         if (str_contains($value, '@')) { [$name, $domain] = explode('@', $value, 2); return mb_substr($name, 0, 1) . '***@' . $domain; }
         return '***' . mb_substr($value, -4);
+    }
+
+    private function ensureTables(): void
+    {
+        static $checked = false;
+        if ($checked) return;
+        $checked = true;
+        try {
+            $this->db->run("CREATE TABLE IF NOT EXISTS customer_otps (
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                user_id BIGINT UNSIGNED NOT NULL,
+                channel VARCHAR(10) NOT NULL,
+                destination VARCHAR(190) NOT NULL,
+                code_hash VARCHAR(255) NOT NULL,
+                password_fingerprint VARCHAR(64) NOT NULL,
+                attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_otp_user (user_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+            $cols = $this->db->fetchAll("SHOW COLUMNS FROM users LIKE 'otp_verified_at'");
+            if (empty($cols)) {
+                $this->db->run("ALTER TABLE users ADD COLUMN otp_verified_at DATETIME NULL, ADD COLUMN otp_verified_channel VARCHAR(10) NULL, ADD COLUMN otp_verified_destination VARCHAR(190) NULL");
+            }
+            $phoneCols = $this->db->fetchAll("SHOW COLUMNS FROM users LIKE 'phone_verified_at'");
+            if (empty($phoneCols)) {
+                $this->db->run("ALTER TABLE users ADD COLUMN phone_verified_at DATETIME NULL, ADD COLUMN verified_phone VARCHAR(32) NULL");
+            }
+        } catch (\Throwable) {}
     }
 }
